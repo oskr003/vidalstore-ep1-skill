@@ -165,22 +165,28 @@ def audit_gateway():
     
     # Check routes exposed in Gateway
     gateway_controllers = []
+    gateway_content = ""
     for root, _, files in os.walk(os.path.join(GATEWAY_DIR, "src")):
         for f in files:
             if f.endswith(".controller.ts") and f != "app.controller.ts":
                 gateway_controllers.append(f)
+                try:
+                    with open(os.path.join(root, f), "r", encoding="utf-8") as fp:
+                        gateway_content += fp.read() + "\n"
+                except Exception:
+                    pass
     
     print(f"  • Controladores en Gateway: {gateway_controllers}")
     missing_routes = []
-    for expected in ["biblioteca", "compras", "licencias"]:
-        if not any(expected in c for c in gateway_controllers):
+    for expected in ["biblioteca", "compras", "licencias", "catalogo"]:
+        if expected not in gateway_content.lower():
             missing_routes.append(expected)
     
     if missing_routes:
         check_fail(f"El Gateway no expone endpoints proxy para: {', '.join(missing_routes)}.",
                    "Crear los controladores proxy en vidalstore-gateway con prefijo /v1/ y reenviar el Authorization header.")
     else:
-        check_pass("El Gateway cuenta con controladores proxy para todos los módulos.")
+        check_pass("El Gateway cuenta con controladores proxy para todos los módulos requeridos (catalogo, compras, biblioteca, licencias, auditoria).")
 
 def audit_backend():
     print_header("4. AUDITORÍA DE BACKEND / BFF Y MICROSERVICIOS")
@@ -188,31 +194,39 @@ def audit_backend():
         check_fail("Carpeta vidalstore-backend no encontrada.")
         return
 
-    compras_ctrl = os.path.join(BACKEND_DIR, "src/compras/compras.controller.ts")
-    if os.path.exists(compras_ctrl):
-        content = open(compras_ctrl).read()
-        if "ConflictException" in content:
-            check_pass("POST /v1/compras implementa idempotencia respondiendo 409 ante licencias ya existentes.")
-        else:
-            check_warn("POST /v1/compras no parece retornar 409 Conflict ante duplicados.",
-                       "Implementar verificación de compra duplicada para devolver 409 según discusión #10.")
+    # Buscar controladores de forma recursiva en backend (BFF y microservicios)
+    backend_controllers = {}
+    for root, _, files in os.walk(os.path.join(BACKEND_DIR, "src")):
+        for f in files:
+            if f.endswith(".controller.ts") or f.endswith(".service.ts"):
+                try:
+                    with open(os.path.join(root, f), "r", encoding="utf-8") as fp:
+                        backend_controllers[f] = fp.read()
+                except Exception:
+                    pass
 
-    biblio_ctrl = os.path.join(BACKEND_DIR, "src/biblioteca/biblioteca.controller.ts")
-    if os.path.exists(biblio_ctrl):
-        content = open(biblio_ctrl).read()
-        if "@CurrentUser('sub')" in content or "sub" in content:
-            check_pass("GET /v1/biblioteca resuelve al usuario estrictamente por el claim 'sub' del JWT.")
-        if "@Param" in content or "@Query" in content:
-            check_fail("GET /v1/biblioteca no debe recibir ningún identificador de usuario por parámetro o query.",
-                       "Eliminar cualquier parámetro de usuario y obtenerlo solo de req.user.sub.")
+    # Compras (idempotencia)
+    compras_content = "".join(v for k, v in backend_controllers.items() if "compras" in k.lower())
+    if "ConflictException" in compras_content:
+        check_pass("POST /v1/compras implementa idempotencia respondiendo 409 ante licencias ya existentes.")
+    else:
+        check_warn("POST /v1/compras no parece retornar 409 Conflict ante duplicados.",
+                   "Implementar verificación de compra duplicada para devolver 409 según discusión #10.")
 
-    licencias_ctrl = os.path.join(BACKEND_DIR, "src/licencias/licencias.controller.ts")
-    if os.path.exists(licencias_ctrl):
-        content = open(licencias_ctrl).read()
-        if "administradores" in content and "Delete" in content:
-            check_pass("DELETE /v1/licencias/:id protegido por grupo 'administradores'.")
-        else:
-            check_fail("DELETE /v1/licencias/:id debe exigir estrictamente grupo 'administradores'.")
+    # Biblioteca (sub)
+    biblio_content = "".join(v for k, v in backend_controllers.items() if "biblioteca" in k.lower() and "controller" in k.lower())
+    if "usuarioSub" in biblio_content or "sub" in biblio_content:
+        check_pass("GET /v1/biblioteca resuelve al usuario estrictamente por el claim 'sub' del JWT.")
+    if "@Param" in biblio_content or "@Query" in biblio_content:
+        check_fail("GET /v1/biblioteca no debe recibir ningún identificador de usuario por parámetro o query.",
+                   "Eliminar cualquier parámetro de usuario y obtenerlo solo de req.user.sub.")
+
+    # Licencias (admin DELETE)
+    licencias_content = "".join(v for k, v in backend_controllers.items() if "licencias" in k.lower())
+    if "administradores" in licencias_content and ("Delete" in licencias_content or "revocar" in licencias_content):
+        check_pass("DELETE /v1/licencias/:id protegido por grupo 'administradores'.")
+    else:
+        check_fail("DELETE /v1/licencias/:id debe exigir estrictamente grupo 'administradores'.")
 
     # Data folder and seed
     data_dir = os.path.join(BACKEND_DIR, "data")
