@@ -1,136 +1,270 @@
-# 🎮 VidalStore EP1 — Skill de Auditoría y Cumplimiento al 100%
+# VidalStore EP1 — Skill de Auditoría, Arquitectura y Cumplimiento al 100%
 ### DSY1107 · Desarrollo Cloud Native I · DUOC UC (2026-02)
 
-[![Antigravity Skill](https://img.shields.io/badge/Antigravity-Skill-4285F4?logo=google&logoColor=white)](https://github.com)
-[![Evaluation](https://img.shields.io/badge/Evaluaci%C3%B3n-EP1%20VidalStore-blueviolet)](#)
-[![Profesor](https://img.shields.io/badge/Docente-Cristian%20Calder%C3%B3n%20%28Umbingelelo%29-orange)](#)
-[![Rúbrica](https://img.shields.io/badge/R%C3%BAbrica-IE1%20a%20IE10%20(100%25)-success)](#)
+Esta skill es una suite integral de aseguramiento de calidad técnica, control de arquitectura y preparación para la defensa individual de la Evaluación Parcial N°1 (Caso VidalStore).
 
-Esta skill es una **suite de auditoría técnica, control de calidad y preparación para la defensa individual** de la Evaluación Parcial N°1 (**Caso VidalStore**).
-
-Fue diseñada para garantizar el **cumplimiento estricto al pie de la letra** de todas las fuentes oficiales de evaluación:
-1. 📄 **`EP1-aclaraciones.pdf`**: Documento normativo oficial que rige sobre el enunciado.
-2. 📄 **`EP1-Caso-VidalStore.pdf`**: Enunciado de negocio, arquitectura y rúbrica oficial (Indicadores IE1 a IE10).
-3. 💬 **Foro oficial de GitHub (`Umbingelelo/DSY1107-Foro-2026-02`)**: Respuestas y aclaraciones directas del profesor Cristian Calderón.
-4. 📋 **Plan de Trabajo del Proyecto**: Flujos de ramas, responsabilidades y ruta de auditoría para grupos de 3 personas.
+Integra de forma estricta las cuatro fuentes normativas del encargo:
+1. **EP1-aclaraciones.pdf**: Documento oficial del profesor Cristian Calderon (Umbingelelo), que rige sobre el enunciado.
+2. **EP1-Caso-VidalStore.pdf**: Enunciado de negocio, arquitectura objetivo y rubrica oficial (Indicadores IE1 a IE10).
+3. **Resoluciones del foro oficial de GitHub**: Criterios de evaluacion, Hosted UI, idempotencia y defensa en profundidad.
+4. **Plan de Trabajo del Proyecto**: Flujo de ramas GitFlow y distribucion tecnica por integrante.
 
 ---
 
-## 🎯 ¿Qué hace esta Skill?
+## 1. Arquitectura Global de 4 Capas
 
-Cuando integras esta skill en tu agente (o ejecutas sus herramientas en tu terminal), la skill:
+El sistema VidalStore desacopla responsabilidades en cuatro capas con comunicacion unidireccional y control estricto de accesos:
 
-1. **Audita el Código Automáticamente**: Verifica si el frontend, gateway y microservicios cumplen con los estándares de la rúbrica y detecta fallas críticas antes de la entrega.
-2. **Garantiza la Seguridad y Tokens**: Valida que el token de Cognito se guarde en `sessionStorage`, que el login use Hosted UI con PKCE (`signInWithRedirect`) y que el Gateway verifique la firma contra el JWKS.
-3. **Controla las 4 Capas Arquitectónicas**: Comprueba la separación estricta entre Angular, API Gateway (puerto 8080 con CORS), BFF y Microservicios.
-4. **Verifica las Rutas y Permisos**: Audita los 7 endpoints del punto 4.3 (y el 8vo de auditoría), asegurando la distinción entre Scopes (aplicación) y Grupos (roles).
-5. **Entrena para la Defensa Individual (60% de la nota)**: Provee un banco de 10 preguntas y respuestas modelo fundamentadas sobre las decisiones arquitectónicas del encargo.
+```mermaid
+flowchart TD
+    subgraph Capa1["1. Frontend (Angular - Puerto 4200)"]
+        SPA["SPA Angular / Amplify<br/>(sessionStorage)"]
+        Router["Router Interno<br/>(/catalogo, /biblioteca, etc.)"]
+        Interceptor["HTTP Interceptor<br/>(Whitelist: :8080)"]
+    end
+
+    subgraph Capa2["2. API Gateway (NestJS - Puerto 8080)"]
+        GWAuth["Autenticacion Token<br/>(Firma, iss, exp, use, client_id)"]
+        GWCors["CORS Estricto<br/>(Solo origin :4200)"]
+        GWProxy["Enrutador Proxy HTTP"]
+    end
+
+    subgraph Cognito["Proveedor de Identidad (AWS Cognito)"]
+        UserPool["User Pool<br/>(Hosted UI + PKCE)"]
+        JWKS["Endpoint JWKS Publico<br/>(Claves RSA para verificar)"]
+        Trigger["Lambda Post-Confirmacion<br/>(Asigna grupo 'jugadores')"]
+    end
+
+    subgraph Capa3["3. BFF - Backend for Frontend (NestJS - Puerto 3001)"]
+        BFFAuth["Segunda Validacion Token<br/>(Defensa en Profundidad)"]
+        BFFRoles["Autorizacion por Rol<br/>(cognito:groups)"]
+        BFFOrq["Orquestacion y Agregacion<br/>de Datos"]
+    end
+
+    subgraph Capa4["4. Microservicios Internos (Node.js)"]
+        MSCat["MS Catalogo (:3002)<br/>(data/catalogo.json)"]
+        MSCom["MS Compras (:3003)<br/>(Idempotencia 409)"]
+        MSBib["MS Biblioteca (:3004)<br/>(data/licencias.json)"]
+        MSAud["MS Auditoria (:3005)<br/>(data/auditoria.json)"]
+    end
+
+    SPA -->|1. Inicio Sesion OIDC PKCE| UserPool
+    UserPool -.->|Claves publicas| JWKS
+    JWKS -.->|Descarga claves| GWAuth
+    UserPool -->|Post-confirmacion| Trigger
+
+    SPA -->|2. UNA llamada API con Bearer JWT| Interceptor
+    Interceptor -->|http://localhost:8080/v1/...| GWAuth
+    GWAuth --> GWProxy
+    GWProxy -->|Reenvia JWT intacto| Capa3
+
+    BFFOrq -->|Consulta juegos| MSCat
+    BFFOrq -->|Registra compra| MSCom
+    BFFOrq -->|Consulta/Revoca licencias| MSBib
+    BFFOrq -->|Registra eventos forenses| MSAud
+```
 
 ---
 
-## 📂 Contenido del Repositorio
+## 2. Distincion Clave: Rutas del Frontend vs Llamadas a la API
+
+Segun la aclaracion del docente:
+* **Rutas del Frontend (Navegacion SPA)**: Se gestionan localmente en el cliente Angular (`app.routes.ts`) para determinar que componente renderizar (`/catalogo`, `/biblioteca`, `/admin/licencias`, `/callback`). No generan peticiones de red por si solas.
+* **Llamadas a la API**: Salen del frontend hacia la red. El frontend tiene **UNA sola direccion base** (`http://localhost:8080`) y emite **UNA sola llamada HTTP** al Gateway por accion o vista.
+* **Orquestacion en el BFF**: El Gateway reenvia esa llamada unica al BFF (`:3001`), y es el BFF quien realiza multiples llamadas internas concurrentes hacia los microservicios para componer la respuesta.
 
 ```text
-vidalstore-ep1-skill/
-├── SKILL.md                          # Directiva principal para agentes de IA (Antigravity, etc.)
-├── README.md                         # Esta documentación para humanos
-├── scripts/
-│   └── audit_ep1.py                  # Script ejecutable de diagnóstico automático en terminal
-└── references/
-    ├── rubrica_completa.md           # Rúbrica desglosada (IE1 a IE10) y causas de nota mínima
-    ├── arquitectura_4_capas.md       # Diagrama de las 4 capas, responsabilidades y códigos HTTP
-    ├── rutas_y_permisos.md           # Matriz detallada de endpoints, métodos y claims
-    ├── cognito_y_seguridad.md        # User pool, grupos, App Clients, Lambda trigger y sessionStorage
-    └── preguntas_defensa.md          # 10 preguntas y respuestas modelo para la defensa técnica
++-----------------------------------------------------------------------------------+
+| FRONTEND (Angular :4200)                                                          |
+| El usuario entra a la vista /biblioteca (Ruta de router Angular)                  |
+| El servicio VidalStore emite UNA SOLA llamada HTTP a la API:                      |
+| --> GET http://localhost:8080/v1/biblioteca                                       |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          | (1 sola llamada con Authorization Bearer)
+                                          v
++-----------------------------------------------------------------------------------+
+| API GATEWAY (NestJS :8080)                                                        |
+| 1. Valida token contra JWKS de Cognito (firma, exp, iss, client_id, token_use).   |
+| 2. Aplica politica CORS (Access-Control-Allow-Origin: http://localhost:4200).     |
+| 3. Reenvia UNA SOLA llamada al BFF:                                               |
+| --> GET http://localhost:3001/v1/biblioteca                                       |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          | (Reenvio proxy con JWT propagado)
+                                          v
++-----------------------------------------------------------------------------------+
+| BFF - BACKEND FOR FRONTEND (NestJS :3001)                                         |
+| 1. Vuelve a validar token por defensa en profundidad (401 si viene sin token).    |
+| 2. Extrae el claim 'sub' para saber quien es el usuario (sin aceptar userId URL). |
+| 3. ORQUESTACION: Realiza MULTIPLES llamadas internas a los microservicios:        |
+|    |                                                                              |
+|    +---> Llamada 1: GET http://localhost:3004/v1/biblioteca (Trae licencias)     |
+|    |                                                                              |
+|    +---> Llamada 2: GET http://localhost:3002/v1/catalogo   (Trae juegos)        |
+|                                                                                   |
+| 4. Combina en memoria las licencias con los datos del catalogo (titulo, precio).  |
+| 5. Devuelve UNA SOLA respuesta consolidada al Gateway -> Frontend.                |
++-----------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 🚀 Cómo Instalar y Usar esta Skill
+## 3. Diagramas de Secuencia de los Flujos Principales
 
-### Opción A: En Google Antigravity (Recomendado)
+### A. Flujo de Autenticacion OIDC con Authorization Code y PKCE
 
-#### 1. Instalación a nivel de Proyecto (Workspace)
-Copia la carpeta de la skill dentro de tu proyecto en la ruta `.agents/skills/`:
+Cumplimiento de Indicadores IE1, IE7 e IE8:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Usuario
+    participant SPA as Angular SPA (:4200)
+    participant Cognito as AWS Cognito Hosted UI
+    participant Lambda as Trigger Post-Confirmacion
+    participant Storage as sessionStorage
+
+    Usuario->>SPA: Clic en 'Iniciar Sesion'
+    Note over SPA: Genera code_verifier y code_challenge (SHA-256)
+    SPA->>Cognito: Redireccion a Hosted UI (/oauth2/authorize)<br/>response_type=code & code_challenge & code_challenge_method=S256
+    Usuario->>Cognito: Ingresa credenciales o se registra
+    opt Registro de Usuario Nuevo
+        Cognito->>Lambda: Ejecuta trigger Post-Confirmacion
+        Lambda->>Cognito: Asigna usuario al grupo 'jugadores' sin intervencion manual
+    end
+    Cognito-->>SPA: Redirige a /callback?code=AUTH_CODE
+    SPA->>Cognito: POST /oauth2/token (Canje de code + code_verifier)
+    Cognito-->>SPA: Retorna tokens (access_token, id_token, refresh_token)
+    SPA->>Storage: Guarda access_token en sessionStorage (prohibido localStorage)
+    SPA->>Usuario: Redirige a /catalogo con sesion activa
+```
+
+---
+
+### B. Flujo de Consulta de Biblioteca (Orquestacion y Agregacion)
+
+Cumplimiento de Indicadores IE2, IE3, IE9 e IE10:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Jugador
+    participant SPA as Frontend Angular (:4200)
+    participant GW as API Gateway (:8080)
+    participant BFF as BFF (:3001)
+    participant MSBib as MS Biblioteca (:3004)
+    participant MSCat as MS Catalogo (:3002)
+
+    Jugador->>SPA: Navega a /biblioteca
+    Note over SPA: Interceptor adjunta access_token desde sessionStorage
+    SPA->>GW: GET http://localhost:8080/v1/biblioteca (Authorization: Bearer JWT)
+    GW->>GW: Valida token con JWKS (RSA, iss, exp, client_id, token_use=access)
+    GW->>BFF: Proxy GET http://localhost:3001/v1/biblioteca (Propaga Bearer JWT)
+    Note over BFF: Valida token y extrae claim sub (prohibido recibir userId en URL)
+    par Llamadas concurrentes del BFF
+        BFF->>MSBib: GET http://localhost:3004/v1/biblioteca (Filtra por sub)
+        MSBib-->>BFF: Retorna [Licencia{id, juegoId, usuarioSub}]
+    and
+        BFF->>MSCat: GET http://localhost:3002/v1/catalogo
+        MSCat-->>BFF--: Retorna [Juego{id, titulo, precio, imagen}]
+    end
+    Note over BFF: Cruza datos: licencia.juego = catalogo.find(id)
+    BFF-->>GW: HTTP 200 OK con Licencias Enriquecidas
+    GW-->>SPA: HTTP 200 OK (con Access-Control-Allow-Origin: :4200)
+    SPA-->>Jugador: Renderiza las tarjetas de juegos adquiridos
+```
+
+---
+
+### C. Flujo Forense de Revocacion y Auditoria (Grupos de 3)
+
+Cumplimiento del Requerimiento 4.8 y Caso de Defensa:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Administrador
+    participant SPA as Frontend Angular (:4200)
+    participant GW as API Gateway (:8080)
+    participant BFF as BFF (:3001)
+    participant MSBib as MS Biblioteca (:3004)
+    participant MSAud as MS Auditoria (:3005)
+
+    Admin->>SPA: Clic en 'Revocar Licencia' (id: lic-99)
+    SPA->>GW: DELETE http://localhost:8080/v1/licencias/lic-99 (Bearer JWT Admin)
+    GW->>GW: Valida token y grupo 'administradores'
+    GW->>BFF: Proxy DELETE http://localhost:3001/v1/licencias/lic-99
+    Note over BFF: Verifica pertenencia al grupo 'administradores' (403 si falla)
+    
+    BFF->>MSBib: DELETE http://localhost:3004/v1/licencias/lic-99
+    MSBib-->>BFF: Retorna {mensaje, licenciaEliminada}
+    
+    BFF->>MSAud: POST http://localhost:3005/v1/auditoria<br/>{adminSub, usuarioSub, juegoId, licenciaId, motivo}
+    MSAud-->>BFF: Retorna {id, ...datos, timestamp}
+    
+    BFF-->>GW: HTTP 200 OK {mensaje: 'Licencia revocada exitosamente', auditoria}
+    GW-->>SPA: HTTP 200 OK
+    SPA-->>Admin: Actualiza lista; la licencia desaparece
+```
+
+---
+
+## 4. Matriz de Responsabilidades y Codigos HTTP
+
+| Situacion / Condicion | Capa Responsable | Codigo HTTP |
+|---|---|:---:|
+| Peticion sin cabecera Authorization | API Gateway (o Backend en llamada directa) | 401 Unauthorized |
+| Token alterado, expirado o con firma invalida | API Gateway | 401 Unauthorized |
+| Token emitido para otra aplicacion (App Client 2) | API Gateway | 401 Unauthorized |
+| Token id_token en lugar de access_token | API Gateway | 401 Unauthorized |
+| Token valido pero usuario no pertenece al grupo requerido | BFF | 403 Forbidden |
+| Token valido pero sin el scope de aplicacion | API Gateway / BFF | 403 Forbidden |
+| Compra de un juego que el usuario ya posee | Microservicio Compras | 409 Conflict |
+| Recurso solicitado no existe (juego o licencia) | Microservicio Catálogo / Biblioteca | 404 Not Found |
+| Operacion exitosa de lectura o eliminacion | Microservicio / BFF | 200 OK |
+| Operacion exitosa de creacion (compra, nuevo juego) | Microservicio / BFF | 201 Created |
+
+---
+
+## 5. Pruebas Practicas en Terminal (Rubrica IE10)
+
+Estas cuatro pruebas deben ejecutarse en vivo en la terminal sin usar la interfaz grafica:
+
+### Prueba 1: Peticion sin token (401 Unauthorized)
 ```bash
-mkdir -p .agents/skills/vidalstore-ep1
-# Copia los archivos del repositorio en esa carpeta
+curl -i http://localhost:8080/v1/catalogo
 ```
-Antigravity detectará automáticamente la skill en el workspace. A partir de ese momento, puedes pedirle cosas como:
-* *"Audita mi proyecto con la skill de VidalStore y dime qué me falta para tener el 100%."*
-* *"Revisa si mi API Gateway cumple con la validación de tokens contra el JWKS."*
-* *"Hazme un simulacro de preguntas para la defensa individual de la EP1."*
 
-#### 2. Instalación Global en tu Máquina
-Si prefieres tenerla disponible en cualquier proyecto o terminal:
+### Prueba 2: Peticion con token alterado (401 Unauthorized)
 ```bash
-mkdir -p ~/.gemini/config/skills/vidalstore-ep1
-# Copiar el contenido del repositorio allí
+curl -i -H "Authorization: Bearer token_falso_invalido" http://localhost:8080/v1/catalogo
 ```
 
----
-
-### Opción B: Ejecución del Script de Diagnóstico en Terminal
-
-Puedes ejecutar el script de auditoría en cualquier momento sin necesidad de IA. Solo colócalo en la raíz donde conviven tus repositorios (`vidalstore-frontend`, `vidalstore-gateway`, `vidalstore-backend`):
-
+### Prueba 3: Peticion con token de otra aplicacion (401 Unauthorized)
 ```bash
-python3 scripts/audit_ep1.py
+curl -i -H "Authorization: Bearer <TOKEN_APP_CLIENT_2>" http://localhost:8080/v1/catalogo
 ```
 
-El script analizará tu código y te entregará un reporte visual con semáforo:
-* `[✓ LOGRADO]`: Requisitos que cumplen al 100%.
-* `[⚠ ATENCIÓN]`: Elementos a revisar (como el conteo de commits).
-* `[✗ NO LOGRADO]`: Errores que restan puntaje según la rúbrica oficial, con la **acción correctiva exacta** para solucionarlos.
+### Prueba 4: Peticion con rol insuficiente (403 Forbidden)
+```bash
+curl -i -X DELETE -H "Authorization: Bearer <TOKEN_JUGADOR>" http://localhost:8080/v1/licencias/lic-1
+```
+
+### Prueba Extra: Defensa en Profundidad (Llamada interna sin Gateway)
+```bash
+curl -i http://localhost:3001/v1/catalogo
+# Retorna 401 Unauthorized demostrando que el backend se protege a si mismo
+```
 
 ---
 
-### Opción C: En Claude Code, Cursor o ChatGPT
+## 6. Estructura de Repositorios
 
-Puedes referenciar o importar el archivo `SKILL.md` como system prompt o regla de proyecto (`.cursorrules`, `CLAUDE.md`, etc.).
-
----
-
-## 📌 Checklist de los 10 Mandamientos de Umbingelelo
-
-Cualquier proyecto que aspire a nota 7.0 debe cumplir con estos 10 puntos:
-
-- [ ] **1. Una sola dirección en el Frontend**: Angular solo conoce la URL del Gateway (`http://localhost:8080`). La lista blanca del interceptor tiene una sola entrada.
-- [ ] **2. Token en `sessionStorage`**: Configurado explícitamente en `main.ts` con `cognitoUserPoolsTokenProvider.setKeyValueStorage(sessionStorage)`.
-- [ ] **3. Hosted UI Obligatorio**: Login y registro delegado a Cognito mediante `signInWithRedirect()`. Prohibido formularios propios de contraseña.
-- [ ] **4. Sin vitrina pública**: `/catalogo` y `/biblioteca` protegidos con `sessionGuard`.
-- [ ] **5. Token validado en ambos saltos**: El Gateway valida contra el JWKS y reenvía el encabezado `Authorization` al Backend para que este vuelva a validar (defensa en profundidad).
-- [ ] **6. Biblioteca resuelta por `sub`**: `GET /v1/biblioteca` obtiene la identidad únicamente del claim `sub` del JWT. Prohibido recibir `userId` por parámetro o body.
-- [ ] **7. Idempotencia en compras**: `POST /v1/compras` retorna `409 Conflict` si el usuario ya posee una licencia para ese juego.
-- [ ] **8. Carpeta `data/` con Seed Real**: Cada microservicio debe tener `data/seed.ts` (o `.js`) que consuma una API externa real y guarde los datos en un JSON versionado.
-- [ ] **9. Grupo `jugadores` automático**: Trigger Lambda Post-Confirmación en Cognito que asigna el rol al registrarse.
-- [ ] **10. Conteo de Commits e Invitación**: Entre 100 y 200 commits en total entre los repositorios, y el usuario `Umbingelelo` invitado como colaborador en todos los repositorios de GitHub.
-
----
-
-## 🧪 Las 4 Pruebas Obligatorias del Gateway (IE10)
-
-Antes de entregar, prueba tu Gateway en el puerto 8080 con estos comandos `curl`:
-
-1. **Sin token (`401 Unauthorized`)**:
-   ```bash
-   curl -i http://localhost:8080/v1/catalogo
-   ```
-2. **Token alterado (`401 Unauthorized`)**:
-   ```bash
-   curl -i -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.tokenInvalido" http://localhost:8080/v1/catalogo
-   ```
-3. **Token de otra aplicación / App Client 2 (`401 Unauthorized`)**:
-   ```bash
-   curl -i -H "Authorization: Bearer <token_client2>" http://localhost:8080/v1/catalogo
-   ```
-4. **Token con rol insuficiente (`403 Forbidden`)**:
-   ```bash
-   curl -i -X DELETE -H "Authorization: Bearer <token_jugador>" http://localhost:8080/v1/licencias/lic-123
-   ```
-
----
-
-## ⚖️ Licencia
-
-Distribuido bajo la licencia MIT. Uso libre para estudiantes de Duoc UC y la comunidad académica.
+```text
+Evaluacion 1/
+├── vidalstore-frontend/       # Capa 1: Angular + Amplify (Puerto 4200)
+├── vidalstore-gateway/        # Capa 2: API Gateway NestJS (Puerto 8080)
+├── vidalstore-backend/        # Capa 3 y 4: BFF (:3001) y Microservicios (:3002 - :3005)
+└── .agents/skills/vidalstore-ep1/ # Suite de auditoria tecnica y rubricas
+```

@@ -21,10 +21,11 @@ Integra las fuentes normativas obligatorias del encargo:
 
 Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrictamente con:
 
-1. **Una Sola Dirección en el Frontend**:
+1. **Una Sola Dirección y Llamada en el Frontend**:
    - Angular (`vidalstore-frontend`) habla **únicamente** con el API Gateway (`http://localhost:8080`).
    - Jamás invoca al BFF ni a los microservicios de forma directa.
    - El interceptor HTTP tiene una lista blanca explícita con **una sola entrada** (`http://localhost:8080`).
+   - **Distinción clave del profesor Umbingelelo**: Las rutas del frontend (`/catalogo`, `/biblioteca`, `/callback`, etc.) son rutas del enrutador SPA de Angular para saber qué componente renderizar y no tienen restricción. Las rutas que deben ir por una sola dirección son las llamadas de red hacia la API. Desde el frontend solo se hace **UNA llamada** a la API del Gateway por acción/vista; posteriormente el **BFF** puede realizar múltiples llamadas internas hacia los microservicios para orquestar y agregar los datos (ej: `GET /v1/biblioteca` llama internamente a biblioteca y catálogo; `DELETE /v1/licencias/:id` llama a biblioteca y auditoría).
 2. **Token en `sessionStorage`**:
    - Configurado en `main.ts` con `cognitoUserPoolsTokenProvider.setKeyValueStorage(sessionStorage)`.
    - Prohibido dejar el token en `localStorage` (hallazgo forense del caso).
