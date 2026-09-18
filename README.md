@@ -18,34 +18,34 @@ El sistema VidalStore desacopla responsabilidades en cuatro capas con comunicaci
 ```mermaid
 flowchart TD
     subgraph Capa1["1. Frontend (Angular - Puerto 4200)"]
-        SPA["SPA Angular / Amplify<br/>(sessionStorage)"]
-        Router["Router Interno<br/>(/catalogo, /biblioteca, etc.)"]
-        Interceptor["HTTP Interceptor<br/>(Whitelist: :8080)"]
+        SPA["SPA Angular y Amplify (sessionStorage)"]
+        Router["Router Interno (/catalogo, /biblioteca)"]
+        Interceptor["HTTP Interceptor (Whitelist: :8080)"]
     end
 
     subgraph Capa2["2. API Gateway (NestJS - Puerto 8080)"]
-        GWAuth["Autenticacion Token<br/>(Firma, iss, exp, use, client_id)"]
-        GWCors["CORS Estricto<br/>(Solo origin :4200)"]
+        GWAuth["Autenticacion Token (Firma, iss, exp, use, client_id)"]
+        GWCors["CORS Estricto (Solo origin :4200)"]
         GWProxy["Enrutador Proxy HTTP"]
     end
 
     subgraph Cognito["Proveedor de Identidad (AWS Cognito)"]
-        UserPool["User Pool<br/>(Hosted UI + PKCE)"]
-        JWKS["Endpoint JWKS Publico<br/>(Claves RSA para verificar)"]
-        Trigger["Lambda Post-Confirmacion<br/>(Asigna grupo 'jugadores')"]
+        UserPool["User Pool (Hosted UI + PKCE)"]
+        JWKS["Endpoint JWKS Publico (Claves RSA)"]
+        Trigger["Lambda Post-Confirmacion (Grupo jugadores)"]
     end
 
     subgraph Capa3["3. BFF - Backend for Frontend (NestJS - Puerto 3001)"]
-        BFFAuth["Segunda Validacion Token<br/>(Defensa en Profundidad)"]
-        BFFRoles["Autorizacion por Rol<br/>(cognito:groups)"]
-        BFFOrq["Orquestacion y Agregacion<br/>de Datos"]
+        BFFAuth["Segunda Validacion Token (Defensa en Profundidad)"]
+        BFFRoles["Autorizacion por Rol (cognito:groups)"]
+        BFFOrq["Orquestacion y Agregacion de Datos"]
     end
 
     subgraph Capa4["4. Microservicios Internos (Node.js)"]
-        MSCat["MS Catalogo (:3002)<br/>(data/catalogo.json)"]
-        MSCom["MS Compras (:3003)<br/>(Idempotencia 409)"]
-        MSBib["MS Biblioteca (:3004)<br/>(data/licencias.json)"]
-        MSAud["MS Auditoria (:3005)<br/>(data/auditoria.json)"]
+        MSCat["MS Catalogo (:3002) - data/catalogo.json"]
+        MSCom["MS Compras (:3003) - Idempotencia 409"]
+        MSBib["MS Biblioteca (:3004) - data/licencias.json"]
+        MSAud["MS Auditoria (:3005) - data/auditoria.json"]
     end
 
     SPA -->|1. Inicio Sesion OIDC PKCE| UserPool
@@ -54,13 +54,13 @@ flowchart TD
     UserPool -->|Post-confirmacion| Trigger
 
     SPA -->|2. UNA llamada API con Bearer JWT| Interceptor
-    Interceptor -->|http://localhost:8080/v1/...| GWAuth
+    Interceptor -->|Ruta /v1/...| GWAuth
     GWAuth --> GWProxy
-    GWProxy -->|Reenvia JWT intacto| Capa3
+    GWProxy -->|Reenvia JWT intacto| BFFAuth
 
     BFFOrq -->|Consulta juegos| MSCat
     BFFOrq -->|Registra compra| MSCom
-    BFFOrq -->|Consulta/Revoca licencias| MSBib
+    BFFOrq -->|Consulta y revoca licencias| MSBib
     BFFOrq -->|Registra eventos forenses| MSAud
 ```
 
@@ -120,14 +120,14 @@ Cumplimiento de Indicadores IE1, IE7 e IE8:
 sequenceDiagram
     autonumber
     actor Usuario
-    participant SPA as Angular SPA (:4200)
+    participant SPA as Frontend Angular (:4200)
     participant Cognito as AWS Cognito Hosted UI
     participant Lambda as Trigger Post-Confirmacion
     participant Storage as sessionStorage
 
     Usuario->>SPA: Clic en 'Iniciar Sesion'
     Note over SPA: Genera code_verifier y code_challenge (SHA-256)
-    SPA->>Cognito: Redireccion a Hosted UI (/oauth2/authorize)<br/>response_type=code & code_challenge & code_challenge_method=S256
+    SPA->>Cognito: Redireccion a Hosted UI con code_challenge (S256)
     Usuario->>Cognito: Ingresa credenciales o se registra
     opt Registro de Usuario Nuevo
         Cognito->>Lambda: Ejecuta trigger Post-Confirmacion
@@ -136,7 +136,7 @@ sequenceDiagram
     Cognito-->>SPA: Redirige a /callback?code=AUTH_CODE
     SPA->>Cognito: POST /oauth2/token (Canje de code + code_verifier)
     Cognito-->>SPA: Retorna tokens (access_token, id_token, refresh_token)
-    SPA->>Storage: Guarda access_token en sessionStorage (prohibido localStorage)
+    SPA->>Storage: Guarda access_token en sessionStorage
     SPA->>Usuario: Redirige a /catalogo con sesion activa
 ```
 
@@ -158,18 +158,18 @@ sequenceDiagram
 
     Jugador->>SPA: Navega a /biblioteca
     Note over SPA: Interceptor adjunta access_token desde sessionStorage
-    SPA->>GW: GET http://localhost:8080/v1/biblioteca (Authorization: Bearer JWT)
+    SPA->>GW: GET /v1/biblioteca (Authorization: Bearer JWT)
     GW->>GW: Valida token con JWKS (RSA, iss, exp, client_id, token_use=access)
-    GW->>BFF: Proxy GET http://localhost:3001/v1/biblioteca (Propaga Bearer JWT)
-    Note over BFF: Valida token y extrae claim sub (prohibido recibir userId en URL)
+    GW->>BFF: Proxy GET /v1/biblioteca (Propaga Bearer JWT)
+    Note over BFF: Valida token y extrae claim sub
     par Llamadas concurrentes del BFF
-        BFF->>MSBib: GET http://localhost:3004/v1/biblioteca (Filtra por sub)
-        MSBib-->>BFF: Retorna [Licencia{id, juegoId, usuarioSub}]
+        BFF->>MSBib: GET /v1/biblioteca (Filtra por sub)
+        MSBib-->>BFF: Retorna licencias del usuario
     and
-        BFF->>MSCat: GET http://localhost:3002/v1/catalogo
-        MSCat-->>BFF--: Retorna [Juego{id, titulo, precio, imagen}]
+        BFF->>MSCat: GET /v1/catalogo
+        MSCat-->>BFF: Retorna catalogo de juegos
     end
-    Note over BFF: Cruza datos: licencia.juego = catalogo.find(id)
+    Note over BFF: Cruza datos y enriquece cada licencia con su juego
     BFF-->>GW: HTTP 200 OK con Licencias Enriquecidas
     GW-->>SPA: HTTP 200 OK (con Access-Control-Allow-Origin: :4200)
     SPA-->>Jugador: Renderiza las tarjetas de juegos adquiridos
@@ -192,20 +192,20 @@ sequenceDiagram
     participant MSAud as MS Auditoria (:3005)
 
     Admin->>SPA: Clic en 'Revocar Licencia' (id: lic-99)
-    SPA->>GW: DELETE http://localhost:8080/v1/licencias/lic-99 (Bearer JWT Admin)
+    SPA->>GW: DELETE /v1/licencias/lic-99 (Bearer JWT Admin)
     GW->>GW: Valida token y grupo 'administradores'
-    GW->>BFF: Proxy DELETE http://localhost:3001/v1/licencias/lic-99
-    Note over BFF: Verifica pertenencia al grupo 'administradores' (403 si falla)
+    GW->>BFF: Proxy DELETE /v1/licencias/lic-99
+    Note over BFF: Verifica pertenencia al grupo 'administradores'
     
-    BFF->>MSBib: DELETE http://localhost:3004/v1/licencias/lic-99
-    MSBib-->>BFF: Retorna {mensaje, licenciaEliminada}
+    BFF->>MSBib: DELETE /v1/licencias/lic-99
+    MSBib-->>BFF: Retorna confirmacion y licencia eliminada
     
-    BFF->>MSAud: POST http://localhost:3005/v1/auditoria<br/>{adminSub, usuarioSub, juegoId, licenciaId, motivo}
-    MSAud-->>BFF: Retorna {id, ...datos, timestamp}
+    BFF->>MSAud: POST /v1/auditoria (adminSub, usuarioSub, juegoId, motivo)
+    MSAud-->>BFF: Retorna evento registrado con timestamp
     
-    BFF-->>GW: HTTP 200 OK {mensaje: 'Licencia revocada exitosamente', auditoria}
+    BFF-->>GW: HTTP 200 OK (licencia revocada y auditoria registrada)
     GW-->>SPA: HTTP 200 OK
-    SPA-->>Admin: Actualiza lista; la licencia desaparece
+    SPA-->>Admin: Actualiza lista y la licencia desaparece
 ```
 
 ---
