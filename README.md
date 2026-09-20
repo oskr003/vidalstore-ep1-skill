@@ -3,11 +3,12 @@
 
 Esta skill es una suite integral de aseguramiento de calidad técnica, control de arquitectura y preparación para la defensa individual de la Evaluación Parcial N°1 (Caso VidalStore).
 
-Integra de forma estricta las cuatro fuentes normativas del encargo:
-1. **EP1-aclaraciones.pdf**: Documento oficial del profesor Cristian Calderon (Umbingelelo), que rige sobre el enunciado.
-2. **EP1-Caso-VidalStore.pdf**: Enunciado de negocio, arquitectura objetivo y rubrica oficial (Indicadores IE1 a IE10).
-3. **Resoluciones del foro oficial de GitHub**: Criterios de evaluacion, Hosted UI, idempotencia y defensa en profundidad.
-4. **Plan de Trabajo del Proyecto**: Flujo de ramas GitFlow y distribucion tecnica por integrante.
+Integra de forma estricta las cinco fuentes normativas del encargo:
+1. **`EP1-aclaraciones.pdf`**: Documento oficial del profesor Cristian Calderón (`Umbingelelo`), que rige sobre el enunciado.
+2. **`EP1-Caso-VidalStore.pdf`**: Enunciado de negocio, arquitectura objetivo y rúbrica oficial (Indicadores IE1 a IE10).
+3. **`Pulso.pdf`**: Guía oficial del Laboratorio L4 ("La cadena completa") y preparación metodológica ("El puente a EP1: tramos 10 al 12"), con las 8 preguntas oficiales de la defensa y la resolución de la trampa de Cognito.
+4. **Resoluciones del foro oficial de GitHub**: Criterios de evaluación, Hosted UI, idempotencia y defensa en profundidad.
+5. **Plan de Trabajo del Proyecto**: Flujo de ramas GitFlow y distribución técnica por integrante.
 
 ---
 
@@ -268,3 +269,121 @@ Evaluacion 1/
 ├── vidalstore-backend/        # Capa 3 y 4: BFF (:3001) y Microservicios (:3002 - :3005)
 └── .agents/skills/vidalstore-ep1/ # Suite de auditoria tecnica y rubricas
 ```
+
+---
+
+## 7. Fundamentos Técnicos y Arquitectura de `Pulso.pdf` (L4 y Puente a EP1)
+
+La guía oficial `Pulso.pdf` profundiza en los criterios de ingeniería de software que el profesor evalúa en el encargo y en la defensa:
+
+### A. La "Trampa de Cognito" en el Auto-registro (Tramo 10)
+Al habilitar *Self-service sign-up* en Cognito, los usuarios pueden crear su cuenta desde la Hosted UI. Sin embargo:
+* **El Problema**: Cognito **no asigna ningún grupo por defecto**. El token emitido no contiene el claim `cognito:groups`.
+* **La Consecuencia**: Si las rutas protegidas exigen roles (`@Roles('jugadores')`), el usuario recién registrado recibe **`403 Forbidden`** en todas partes, incluso para ver su propia pantalla.
+* **Las Dos Soluciones Legítimas**:
+  * **Salida A (Nivel de Código / Guard)**: Si `cognito:groups` viene vacío o ausente en el payload, el guard asigna en memoria el rol de menor privilegio (`jugadores`). Esto protege la aplicación inmediatamente sin depender de servicios externos.
+  * **Salida B (Nivel de Infraestructura AWS)**: Función Lambda configurada como trigger *Post-Confirmation* que ejecuta `AdminAddUserToGroup` al verificarse el correo del usuario.
+* **Defensa Técnica**: En la defensa se destaca reconocer el límite de la solución: *"Salida A es nuestro respaldo a nivel de dominio; en producción se migra a Salida B (Lambda trigger) para que el token venga firmado con el grupo directamente desde AWS"*.
+
+---
+
+### B. Reglas de Escritura, Borrado Lógico y Prevención de BOLA (Tramo 11)
+Para las rutas de mutación (`POST /v1/compras`, `POST /v1/catalogo`, `DELETE /v1/licencias/:id`):
+1. **Asignación de IDs**: El ID del nuevo registro lo asigna el microservicio / capa de persistencia (`Math.max(...) + 1`), **nunca el cliente ni el BFF**. Un cliente que elige su propio ID terminaría pisando registros de otros.
+2. **Borrado Lógico vs. Físico**:
+   * En transacciones con historial (compras, licencias, préstamos), un `DELETE` **no elimina la fila física de la base de datos**.
+   * Se aplica **borrado lógico** actualizando su estado (`devuelto: true` o `estado: 'revocada'`), preservando la trazabilidad para auditoría forense. La ruta se llama `DELETE` porque describe la intención del cliente (*"elimina esto de mi lista activa"*), no la implementación interna.
+3. **La Regla de Oro de la Identidad**:
+   * El `usuarioSub` **siempre** proviene de `req.user.sub` (token validado).
+   * **NUNCA** se acepta `usuarioSub` o `userId` desde el `@Body()`. Si el cliente envía ese campo en el JSON, se descarta para evitar suplantaciones de identidad (vulnerabilidad BOLA / OWASP API #1).
+4. **Semántica de Códigos de Error**:
+   * `400 Bad Request`: Parámetro con formato incorrecto (ej. ID de texto en lugar de entero con `ParseIntPipe`).
+   * `404 Not Found`: El recurso a revocar o consultar no existe en el sistema.
+   * `405 Method Not Allowed`: Se invoca un método HTTP no soportado sobre la ruta (distinto de 404 que indica que la ruta no existe).
+   * `409 Conflict`: Regla de negocio infringida o violación de idempotencia (el usuario ya compró la licencia o no quedan ejemplares disponibles).
+
+---
+
+### C. Agregación Eficiente en el BFF y Rendimiento ($O(N)$ vs $O(N \times M)$) (Tramos 1 y 4)
+* **Principio de Diseño**: *"El cliente recibe lo que necesita mostrar, no la base de datos"*.
+  * El BFF evita que el cliente deba descargar el catálogo completo y exponer campos internos (precios de costo, stock reservado) en las herramientas de desarrollo (F12).
+* **Concurrencia en Servidor**: Las peticiones internas hacia los microservicios se ejecutan en paralelo con `Promise.all([fetchCatalogo(), fetchBiblioteca()])`. Con 300 ms de latencia simulada por microservicio:
+  * Ejecución en Serie: $300\text{ ms} + 300\text{ ms} = 600\text{ ms}$.
+  * Ejecución en Paralelo (BFF): $\max(300\text{ ms}, 300\text{ ms}) = 300\text{ ms}$.
+* **Cruce de Datos con `Map`**:
+  * Para combinar las licencias con los datos del catálogo se indexa el catálogo en un `new Map<string, Juego>(catalogo.map(j => [j.id, j]))`.
+  * La búsqueda por ID en el `Map` toma tiempo constante $O(1)$, logrando una complejidad global de **$O(N)$**.
+  * Si se usara `.find()` dentro de un `.map()`, la complejidad sería **$O(N \times M)$**, lo cual degradaría drásticamente el rendimiento con catálogos masivos.
+* **Fail-Fast con `ConfigService.getOrThrow()`**:
+  * Leer variables de entorno con `getOrThrow` provoca que el BFF falle al momento de iniciar en la terminal si falta una variable crítica (`COGNITO_ISSUER`), en lugar de fallar en tiempo de ejecución con errores crípticos de `Invalid URL` ante los usuarios.
+
+---
+
+### D. Semántica de Códigos HTTP y Prevención de Enumeración (Tramo 7)
+* Si un usuario nuevo o sin compras consulta su biblioteca (`GET /v1/biblioteca`), el sistema responde **`200 OK` con `[]`** (lista vacía).
+* Responder `403` o `404` sería erróneo y peligroso:
+  * El usuario tiene derecho a preguntar por su biblioteca (no es 403).
+  * Distinguir *"no tienes registros"* de *"no tienes permiso para ver"* evita ataques de **enumeración** de recursos.
+
+---
+
+### E. Manejo Defensivo de Red con `fetch` en Node.js (Tramo 2)
+* En Node.js, `fetch` **no lanza excepción** cuando el servidor responde con códigos de error HTTP como 400, 401, 404, 429 o 500. La promesa se resuelve exitosamente con `response.ok = false`.
+* Si no se verifica `if (!response.ok)`, el código intentará ejecutar `response.json()` sobre el cuerpo del error y fallará con un `TypeError: Cannot read properties of undefined`, ocultando la causa raíz del fallo.
+
+---
+
+## 8. Las 6 Pruebas de Integración de la Cadena Completa (Tramo 9)
+
+Estas pruebas validan el flujo de extremo a extremo y el comportamiento de la arquitectura de 4 capas:
+
+| # | Tipo de Petición | Comando Terminal | Código Esperado | Quién lo Corta / Responde | Justificación de Arquitectura |
+|---|---|---|:---:|---|---|
+| **1** | Sin cabecera `Authorization` | `curl -i http://localhost:8080/v1/catalogo` | **401** | API Gateway (:8080) | El perímetro exterior corta peticiones anónimas; el BFF ni se entera. |
+| **2** | Token válido de jugador | `curl -i -H "Authorization: Bearer $T" http://localhost:8080/v1/biblioteca` | **200** | BFF (:3001) | Gateway valida token; BFF orquesta y responde con datos agregados en 1 llamada. |
+| **3** | Token de jugador en ruta de administración | `curl -i -H "Authorization: Bearer $T_JUG" http://localhost:8080/v1/licencias` | **403** | BFF (`RolGuard`) | Gateway valida que el token es legal; el `RolGuard` del BFF comprueba que no pertenece a `administradores`. |
+| **4** | Token de administrador en ruta de administración | `curl -i -H "Authorization: Bearer $T_ADM" http://localhost:8080/v1/licencias` | **200** | BFF (:3001) | Acceso concedido al rol con máximos privilegios. |
+| **5** | Llamada directa al BFF sin pasar por Gateway | `curl -i http://localhost:3001/v1/catalogo` | **401** | BFF (`JwtGuard`) | **Defensa en profundidad**: El BFF no asume que las llamadas internas son de confianza; se protege a sí mismo. |
+| **6** | Microservicio interno caído (apagado) | `curl -i -H "Authorization: Bearer $T" http://localhost:8080/v1/biblioteca` | **503** | BFF (:3001) | El BFF detecta la indisponibilidad del servicio interno y devuelve `503 Service Unavailable` indicando el servicio afectado. |
+
+---
+
+## 9. Matriz de las 8 Preguntas Oficiales de la Defensa Individual (`Pulso.pdf` §12.2)
+
+La evaluación asigna el **60% de la nota final a la defensa técnica individual**. La guía oficial establece estas 8 preguntas literales:
+
+| # | Pregunta Oficial del Tramo 12.2 | Tramo Origen | Concepto Clave a Responder |
+|---|---|:---:|---|
+| **1** | *¿Por qué el BFF vuelve a validar el token si el gateway ya lo validó?* | Tramo 5.2 | **Defensa en profundidad y Zero Trust**: Red interna no confiable, necesidad de los claims (`sub`) con costo criptográfico marginal, y protección ante futuros canales sin gateway (colas RabbitMQ/SQS). |
+| **2** | *¿Qué decide un scope y qué decide un grupo, y por qué son cosas distintas?* | L3 §7.1, Tramo 6 | **Scope**: Qué operaciones puede pedir la *aplicación cliente*. **Grupo**: Qué rol tiene la *persona humana*. Gateway autoriza scope; BFF autoriza grupo. |
+| **3** | *¿Cuándo respondes 401 y cuándo 403?* | Tramo 9 (P1 y P3) | **401**: Identidad no comprobada (*"no sé quién eres"*). **403**: Identidad comprobada pero permiso insuficiente (*"no te alcanza el rol"*). Evita bucle infinito de login. |
+| **4** | *¿Qué pregunta de autorización no puede responder un guard, y dónde va esa comprobación?* | Tramo 7 | *"¿Este recurso le pertenece a este usuario?"*. Un guard no ve la persistencia. Se comprueba en el **Service** filtrando por `usuarioSub === sub`. Si está vacío devuelve `200 []`. |
+| **5** | *¿Por qué el `client_id` del access token no sirve para autorizar?* | L3 §7.1 | Identifica la aplicación cliente emisora, no al usuario humano. Solo sirve para rechazar tokens de otras aplicaciones del mismo User Pool. |
+| **6** | *¿Qué gana el frontend con que exista el BFF? Da el número medido* | Tramo 4.3 | Una sola llamada de red, concurrencia en servidor con `Promise.all` (~300 ms vs ~600 ms en serie), cruce en memoria $O(N)$ con `Map` y cero fuga de datos internos (F12). |
+| **7** | *Un usuario se registra solo y no puede entrar a nada. ¿Qué pasó y cómo lo resolviste?* | Tramo 10 | Trampa de Cognito (auto-registro sin grupos). Salida A: rol de menor privilegio por omisión en el guard. Salida B: trigger Lambda Post-Confirmation. |
+| **8** | *Al crear o revocar un recurso, ¿de dónde sacas el usuario, y por qué no del cuerpo?* | Tramo 11.3 | Se extrae estrictamente de `req.user.sub` (token firmado). Si viniera del `@Body()`, cualquiera podría falsificar el ID y operar sobre cuentas ajenas (vulnerabilidad BOLA). |
+
+---
+
+## 10. Guía Maestra de Diagnóstico y Resolución de Errores (Troubleshooting)
+
+Tabla de síntomas extraída de `Pulso.pdf` (Páginas 72–74) para depuración rápida durante el desarrollo y la evaluación:
+
+| Síntoma Observado | Causa Raíz Probable | Solución Inmediata |
+|---|---|---|
+| `npm error Cannot read properties of null (reading 'edgesOut')` | Versión de npm desactualizada (npm 10 en Node 22). | Actualizar a Node 24 y npm 11 (`nvm use 24`) o usar `--legacy-peer-deps`. |
+| `Cannot find module './panel.service'` en BFF | El BFF corre en ESM (`"type": "module"`) y falta la extensión. | Agregar la extensión `.js` al import: `from './panel.service.js'`. |
+| `TypeError: Invalid URL` al iniciar BFF | Se leyó `process.env.COGNITO_ISSUER` arriba del archivo antes de cargar el entorno. | Inyectar `ConfigService` en el constructor del guard/servicio o usar `ConfigModule.forRoot({ isGlobal: true })`. |
+| `Configuration key "COGNITO_ISSUER" does not exist` | Falta la variable en el archivo `.env` del servicio. | Agregar la variable requerida al archivo `.env` local. |
+| `Nest can't resolve dependencies of the XService` | Falta registrar el servicio o guard en el arreglo `providers` o `imports` del módulo. | Agregar la clase dependiente a `providers: [...]` en el módulo correspondiente. |
+| `EADDRINUSE :::8080` o `:::3001` | Un proceso anterior de Node/Nest quedó ejecutándose en segundo plano. | Identificar el PID con `lsof -i :<PUERTO>` y terminarlo con `kill -9 <PID>`. Nunca cambiar los puertos de la arquitectura. |
+| `401 Unauthorized «sin token»` tras enviar token desde Angular | El Gateway recibió el token pero olvidó reenviar la cabecera en el fetch hacia el BFF. | Asegurar `headers: { authorization }` en la llamada proxy del Gateway al Backend. |
+| `403 Forbidden` para todos los usuarios (incluso admin) | El orden de los guards está invertido: `RolGuard` corrió antes que `JwtGuard`. | Configurar estrictamente `@UseGuards(JwtGuard, RolGuard)` en ese orden. |
+| `401` donde se esperaba `403` | Se está tratando la falta de permisos de rol como una falla de autenticación. | Lanzar `ForbiddenException` (403) en lugar de `UnauthorizedException` (401). |
+| Petición directa al BFF responde `200` sin token | Falta el decorador `@UseGuards(JwtGuard)` a nivel del controlador del BFF. | Colocar `@UseGuards(JwtGuard)` sobre la clase controladora para cerrar el perímetro interno. |
+| Catálogo o biblioteca devuelve `200` con `[]` en usuario nuevo | Comportamiento esperado y correcto: el usuario no tiene registros previos. | No es un error; evita ataques de enumeración. |
+| Error de CORS en la consola del navegador | Angular está llamando al puerto `3001` directo o al puerto incorrecto del Gateway. | Verificar que Angular llame exclusivamente a `http://localhost:8080`. |
+| Token falla con `401` repentinamente tras una hora | Los tokens de AWS Cognito expiran a los 60 minutos. | Volver a iniciar sesión en la Hosted UI para obtener un nuevo token vigente. |
+| Usuario recién registrado recibe `403` en todo | Cognito no le asignó ningún grupo (trampa del auto-registro). | Verificar que el guard asigne `jugadores` por defecto (Salida A) o que el trigger Lambda esté activo (Salida B). |
+| `400` en `POST` desde Gateway, pero `201` directo al BFF | El Gateway no reenvió el cuerpo de la petición en el fetch. | Agregar `body: JSON.stringify(body)` y `Content-Type: application/json` en el proxy del Gateway. |
+

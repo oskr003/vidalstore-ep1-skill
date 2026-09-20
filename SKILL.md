@@ -12,8 +12,9 @@ Esta skill actúa como el estándar de control de calidad, auditoría técnica y
 Integra las fuentes normativas obligatorias del encargo:
 1. **`EP1-aclaraciones.pdf`**: Documento oficial del profesor Cristian Calderón (`Umbingelelo`), el cual complementa el enunciado y rige sobre él.
 2. **`EP1-Caso-VidalStore.pdf`**: Enunciado de negocio, arquitectura objetivo y rúbrica oficial (indicadores IE1 a IE10).
-3. **Resoluciones del foro GitHub (`Umbingelelo/DSY1107-Foro-2026-02`)**: Criterios de evaluación, commits estimados, Hosted UI, idempotencia y defensa en profundidad.
-4. **`Plan_VidalStore_EP1.pdf`**: Plan de trabajo específico del grupo (3 integrantes: David, Oscar e Iván).
+3. **`Pulso.pdf`**: Guía oficial del Laboratorio L4 ("La cadena completa") y preparación metodológica ("El puente a EP1: tramos 10 al 12") del profesor Cristian Calderón, con las 8 preguntas oficiales de la defensa, pruebas de la cadena y la resolución de la trampa de Cognito.
+4. **Resoluciones del foro GitHub (`Umbingelelo/DSY1107-Foro-2026-02`)**: Criterios de evaluación, commits estimados, Hosted UI, idempotencia y defensa en profundidad.
+5. **`Plan_VidalStore_EP1.pdf`**: Plan de trabajo específico del grupo (3 integrantes: David, Oscar e Iván).
 
 ---
 
@@ -39,16 +40,31 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
    - **BFF / Microservicios**: Autoriza por rol (`cognito:groups`) y busca datos. Responde `403 Forbidden` si el rol no alcanza.
    - **Cierre por detrás**: Si el BFF o un microservicio recibe una petición sin token, responde `401 Unauthorized`.
 6. **Resolución de Biblioteca por `sub`**:
-   - `GET /v1/biblioteca` resuelve las licencias del usuario **únicamente** a través del claim `sub` del JWT. Prohibido recibir `userId` por parámetro de ruta, query o body.
+   - `GET /v1/biblioteca` resuelve las licencias del usuario **únicamente** a través del claim `sub` del JWT. Prohibido recibir `userId` por parámetro de ruta, query o body (prevención de BOLA / IDOR).
 7. **Idempotencia en Compras**:
    - `POST /v1/compras`: Un usuario solo puede tener una licencia por juego. Si ya la posee, responde `409 Conflict`.
 8. **Carpeta `data/` con Seed Real**:
-   - Cada microservicio debe tener `data/seed.ts` (o `.js`) que consuma al menos una API externa real (RAWG, FreeToGame, PokeAPI, etc.) y guarde los datos en un JSON versionado (`data/catalogo.json`). Prohibidos datos inventados a mano.
-9. **Asignación Automática de Grupo en Cognito**:
-   - El registro de usuario nuevo asigna automáticamente el grupo `jugadores` mediante trigger Lambda Post-Confirmación, sin intervención manual en AWS.
-10. **CORS Estricto**:
-    - Únicamente en el Gateway. Origen restringido a `http://localhost:4200` y métodos HTTP utilizados.
-11. **Higiene de Repositorios y Git**:
+   - Cada microservicio debe tener `data/seed.ts` (o `.js`) que consuma al menos una API externa real (FreeToGame, RAWG, etc.) y guarde los datos en un JSON versionado (`data/catalogo.json`). Prohibidos datos inventados a mano.
+9. **Resolución de la "Trampa de Cognito" en Auto-registro**:
+   - Al registrarse por Managed Login / Hosted UI, Cognito no asigna ningún grupo por omisión (`cognito:groups` viene vacío).
+   - **Salida A**: El guard / backend asume por omisión el rol de menor privilegio (`jugadores`) si el arreglo de grupos está vacío.
+   - **Salida B**: Trigger Lambda Post-Confirmación en AWS que ejecuta `AdminAddUserToGroup`.
+10. **Reglas de Escritura, Identidad y Borrado Lógico**:
+    - Endpoints con `@Body()` y `@Param('id', ParseIntPipe)`.
+    - El ID del nuevo registro lo asigna el microservicio / persistencia (`Math.max(...) + 1`), jamás el cliente ni el BFF.
+    - **Borrado Lógico**: `DELETE` marca el estado como revocado (`devuelto: true` o `estado: 'revocada'`), preservando el registro para trazabilidad y auditoría.
+    - **Regla de Oro de Identidad**: La identidad del que actúa nunca se lee del `@Body()`; se extrae siempre de `req.user.sub` (token firmado).
+11. **Agregación Concurrente Eficiente en el BFF**:
+    - Llamadas internas con `Promise.all` para ejecución concurrente en servidor.
+    - Cruces de datos en memoria mediante `new Map()` indexado por ID (complejidad $O(N)$ vs $O(N \times M)$ de `.find()` anidado).
+    - Patrón Fail-Fast al arranque con `configService.getOrThrow()`.
+12. **Semántica de Códigos HTTP y Prevención de Enumeración**:
+    - Si el usuario consulta su propia biblioteca/préstamos y está vacía, debe retornar **`200 OK` con `[]`**, jamás 403 ni 404 (evita vulnerabilidad de enumeración).
+    - Verbos HTTP no soportados responden **`405 Method Not Allowed`**.
+13. **CORS Estricto**:
+    - Únicamente en el Gateway (`app.enableCors({ origin: 'http://localhost:4200' })`).
+    - Prohibido configurar CORS en el BFF o microservicios.
+14. **Higiene de Repositorios y Git**:
     - Repositorios separados y privados.
     - Flujo GitFlow: `main` recibe merges de `dev`, y `dev` de `feature/...`.
     - Docente (`Umbingelelo`) agregado como colaborador en **todos** los repositorios.
@@ -103,13 +119,22 @@ Confirmar que el Gateway (`vidalstore-gateway`):
 ### Paso 3: Verificar las 4 Pruebas Obligatorias de Gateway (IE10)
 Deben estar documentadas en el README y ser reproducibles con `curl`:
 1. **Petición sin token**:
-   `curl -i http://localhost:8080/v1/catalogo` -> Debe retornar `401 Unauthorized`.
+   `curl -i http://localhost:8080/v1/catalogo` -> Retorna `401 Unauthorized`.
 2. **Petición con token alterado (firma inválida)**:
-   `curl -i -H "Authorization: Bearer <token_modificado>" http://localhost:8080/v1/catalogo` -> Debe retornar `401 Unauthorized`.
+   `curl -i -H "Authorization: Bearer <token_modificado>" http://localhost:8080/v1/catalogo` -> Retorna `401 Unauthorized`.
 3. **Petición con token de otra aplicación (App Client 2)**:
-   `curl -i -H "Authorization: Bearer <token_client2>" http://localhost:8080/v1/catalogo` -> Debe retornar `401 Unauthorized`.
+   `curl -i -H "Authorization: Bearer <token_client2>" http://localhost:8080/v1/catalogo` -> Retorna `401 Unauthorized`.
 4. **Petición con token válido pero rol insuficiente**:
-   `curl -i -H "Authorization: Bearer <token_jugador>" -X DELETE http://localhost:8080/v1/licencias/lic-123` -> Debe retornar `403 Forbidden`.
+   `curl -i -H "Authorization: Bearer <token_jugador>" -X DELETE http://localhost:8080/v1/licencias/lic-123` -> Retorna `403 Forbidden`.
+
+### Paso 4: Las 6 Pruebas de la Cadena Completa (Pulso.pdf Tramo 9)
+Comprobar el aislamiento y la resiliencia en la terminal:
+1. **Sin token contra Gateway**: Retorna `401` (Gateway corta en el borde).
+2. **Token válido de jugador**: Retorna `200` con datos agregados en una sola llamada.
+3. **Token de jugador a ruta administrativa (`/licencias`)**: Retorna `403` (cortado por el `RolGuard` del BFF).
+4. **Token de administrador a ruta administrativa**: Retorna `200` con todos los registros.
+5. **Petición directa al BFF (`:3001`) sin pasar por Gateway**: Retorna `401` (defensa en profundidad; el BFF se protege solo).
+6. **Microservicio interno caído**: Retorna `503 Service Unavailable` indicando qué microservicio falló. Al restablecerlo, vuelve a responder `200` de inmediato sin reiniciar el Gateway ni el BFF.
 
 ---
 
@@ -118,8 +143,8 @@ Deben estar documentadas en el README y ser reproducibles con `curl`:
 Para profundizar en áreas específicas del encargo, consultar los siguientes documentos de referencia adjuntos:
 - [Rúbrica Oficial Detallada (IE1 a IE10)](./references/rubrica_completa.md): Ponderaciones, criterios destacados y causas de nota mínima.
 - [Arquitectura de 4 Capas y Códigos HTTP](./references/arquitectura_4_capas.md): Responsabilidad de cada componente, CORS y matriz de códigos de error.
-- [Configuración de Cognito y Seguridad](./references/cognito_y_seguridad.md): User Pool, Resource Server, grupos, scopes, App Clients y trigger Lambda.
-- [Preguntas Típicas de la Defensa Técnica](./references/preguntas_defensa.md): Argumentación y respuestas modelo para la defensa individual de Oscar, David e Iván.
+- [Configuración de Cognito y Seguridad](./references/cognito_y_seguridad.md): User Pool, Resource Server, grupos, scopes, App Clients, auto-registro y Lambda trigger.
+- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas literales de `Pulso.pdf` §12.2 + 10 preguntas frecuentes con argumentación técnica modelo.
 
 ---
 
