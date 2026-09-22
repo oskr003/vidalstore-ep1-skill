@@ -5,6 +5,7 @@ La defensa técnica individual representa el **60% de la nota final de la EP1**.
 Este documento consolida:
 1. **Las 8 preguntas oficiales y obligatorias de la guía oficial `Pulso.pdf` (Tramo 12.2)**.
 2. **Las preguntas complementarias de rúbrica (IE1 a IE10), caso forense de VidalStore y discusiones de GitHub**.
+3. **El guion oficial de la defensa técnica de la clase magistral D6 ("Git en serio y defender una arquitectura")**: el reloj de 15 minutos, los 5 flujos de punta a punta, preguntas con señales de alarma, framework de 4 pasos, modificación señalada y botón COMPRAR.
 
 ---
 
@@ -194,3 +195,361 @@ Estas ocho preguntas son las que el profesor Cristian Calderón extrajo de los t
      curl -i -X DELETE -H "Authorization: Bearer <token_usuario_jugador>" http://localhost:8080/v1/licencias/lic-001
      # Resultado esperado: HTTP/1.1 403 Forbidden
      ```
+
+---
+
+## Bloque C: Guion Oficial de la Defensa Técnica · Clase D6 ("Git en Serio y Defender una Arquitectura")
+
+La clase magistral D6 del profesor Cristian Calderón (`Umbingelelo`) define el estándar con el que se evalúa la presentación individual (60% de la nota final).
+
+> [!IMPORTANT]
+> **Criterio de Evaluación de D6:**
+> No se mide si el estudiante memorizó conceptos teóricos generales. Se mide si **construyó el sistema**, y la diferencia se nota en que quien construyó habla de **su caso particular** (sus puertos, sus logs, las líneas de su código, los errores que rompió y arregló); quien no construyó solo puede dar respuestas genéricas de manual.
+
+---
+
+### 1. El Reloj de 15 Minutos de la Defensa
+
+El turno dura exactamente **15 minutos cronometrados por grupo**, sean 2 o 3 integrantes:
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ Minuto 0 a 1   │ Todos los integrantes: declaran procesos corriendo y en qué puerto.   │
+├────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ Minuto 1 a 7   │ Flujo A (un integrante) y Flujo B (otro integrante).                   │
+│                │ *Nadie conduce dos flujos seguidos*.                                  │
+├────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ Minuto 7 a 12  │ Flujos C y D, y 30 segundos del Flujo E (abrir el script de seed).    │
+├────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ Minuto 12 a 14 │ Modificación señalada: una por integrante sobre código que NO escribió│
+├────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ Minuto 14 a 15 │ Pregunta del botón COMPRAR: evaluación de fundamentación técnica.     │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+* **Repartición de preguntas**: En un grupo de 3 integrantes caen entre 5 y 6 preguntas por persona. **La mitad de las preguntas son sobre un flujo que condujo tu compañero**, por lo que «eso lo hizo el otro» equivale a un 0% en la pregunta.
+* **Regla de oro de inicio**: Se debe entrar a la sala con el **sistema ya levantado y la sesión recién iniciada** (el token de Cognito expira en 1 hora; si vence en pleno flujo B se pierden 3 valiosos minutos). Si el sistema no levanta, solo hay 3 minutos de gracia para intentar levantarlo; luego la defensa sigue en frío sobre el código.
+
+---
+
+### 2. Las 5 Ventanas Obligatorias Abiertas al Entrar
+
+Para no perder tiempo buscando archivos o levantando servicios, el grupo debe ingresar con estas 5 ventanas abiertas:
+
+| Ventana | Qué debe estar mostrando en pantalla |
+|---|---|
+| **1. Terminal** | Procesos activos con sus puertos: Angular (`4200`), Gateway (`8080`), BFF (`3000`/`3001`), Microservicios (`3002`, `3003`, `3004`, `3005`). |
+| **2. Navegador** | Aplicación con sesión iniciada, pestaña **Red (Network)** limpia lista para registrar peticiones, y pestaña **Application** mostrando el token en `sessionStorage`. |
+| **3. Cliente REST / curl** | Dos tokens vigentes listos (jugador y administrador) para probar la misma ruta con `403` y `200`, más llamada directa al BFF sin token (`401`). |
+| **4. Editor (VS Code)** | Pestañas del interceptor de Angular y de los guards del BFF (`JwtGuard`, `RolesGuard`) ya abiertas. |
+| **5. Consola AWS Cognito** | User Pool con sus grupos (`jugadores`, `editores`, `administradores`), usuarios creados y los **dos app clients** configurados. *(Es lo único en la nube; todo lo demás corre en la máquina local)*. |
+
+---
+
+### 3. El Framework de Respuesta en 4 Pasos (1 Minuto por Parada)
+
+Cada parada de un flujo dura aproximadamente 1 minuto. Para responder con rigor técnico y convencer al docente de que hubo autoría real, estructurar la respuesta en estos 4 pasos:
+
+```text
+1. QUÉ HICE               --> "Puse un BFF en NestJS entre Angular y los microservicios."
+2. QUÉ PROBLEMA RESUELVE  --> "La vista necesitaba 4 llamadas y la autorización por grupo debía centralizarse."
+3. QUÉ DESCARTÉ           --> "Podía hacer las 4 llamadas desde el frontend, pero lo descarté porque 
+                              fugaría datos confidenciales y saturaría la red móvil."
+4. CÓMO LO COMPRUEBO      --> "Acá está el Promise.all en el código y en la pestaña Red se ve 1 sola llamada."
+```
+
+* **Por qué importa el paso 3 («Qué descarté»)**: Es el que más pesa y el que casi nadie hace. Nombrar la alternativa técnica que rechazaste demuestra que hubo análisis de ingeniería y no una copia ciega de código.
+* **Por qué importa el paso 4 («Cómo lo compruebo»)**: Saca al estudiante del relato teórico abstracto y lo devuelve a la pantalla, que es donde se califica la defensa.
+
+---
+
+### 4. Preguntas Parada por Parada y Señales de Alarma (El Guion Oficial de D6)
+
+| Parada / Flujo | Pregunta Oficial del Docente | Señal de Alarma (Lo que NUNCA debes responder) | Respuesta Técnica Correcta |
+|---|---|---|---|
+| **A · Identidad** | *¿En qué grupo queda esta cuenta recién creada, y quién se lo asignó?* | «Yo se lo asigno después a mano en la consola de AWS». | Queda asignada automáticamente en `jugadores`. Se explica la trampa de Cognito (auto-registro deja `cognito:groups` vacío) y cómo se resolvió: por fallback en el guard (`roles = groups.length ? groups : ['jugadores']`) o mediante trigger Lambda Post-Confirmation. |
+| **A · Identidad** | *¿Qué claim del token dice quién eres y cuál dice qué puedes hacer?* | Confundir el `scope` con el rol, o creer que el rol está en el claim `sub`. | `sub` (Subject) es el UUID inmutable que dice **quién eres**. `cognito:groups` indica **qué rol humano tienes** (`administradores`, `editores`, `jugadores`) y `scope` indica **qué operaciones tiene permitidas la aplicación cliente** ante el Resource Server. |
+| **B · Lo Propio** | *¿A qué direcciones le habló el navegador en esta pantalla?* | Aparecen 2 o 3 direcciones distintas en la pestaña Red (ej: habla directo al BFF o microservicio). | El navegador habla a **UNA SOLA dirección**: `http://localhost:8080` (API Gateway). La lista blanca del interceptor tiene una sola entrada. Es el BFF quien orquesta por detrás con los microservicios. |
+| **B · Lo Propio** | *¿De dónde sale el usuario cuyas licencias devuelves?* | Lo recibe por parámetro de ruta, query o body («pero igual está protegido con token»). | Sale exclusivamente del claim `sub` del JWT verificado en `req.user.sub`. Recibirlo por parámetro expondría la vulnerabilidad BOLA/IDOR (cualquiera cambiaría el ID y vería juegos ajenos). |
+| **C · Rol Insuficiente** | *Con el token del jugador, demuéstrame que el control está en el servidor.* | Responde `401` en vez de `403`, o responde `200` y el alumno dice «es que en la interfaz el botón está oculto». | Se ejecuta la llamada `DELETE /v1/licencias/:id` con token de jugador vía `curl` o cliente REST. El servidor backend responde **`403 Forbidden`** porque el `RolesGuard` cortó la ejecución. La seguridad no depende del botón en Angular. |
+| **D · Por Detrás** | *Llama al BFF y al microservicio directo en su puerto, sin token. ¿Qué responden y por qué?* | Responde `200 OK` (demuestra que la capa interna está desprotegida). | Responde **`401 Unauthorized`**. Por defensa en profundidad y Zero Trust, el BFF y microservicios no asumen que la petición viene del gateway; si no hay token firmado, se cierran. |
+| **D · Por Detrás** | *Cambia un carácter del token. ¿Qué pasa y quién emite ese 401?* | El estudiante no sabe qué capa lo rechazó ni contra qué se verificó la firma. | Responde **`401 Unauthorized`**. Lo emite el Gateway porque la firma criptográfica RSA falló al verificarse contra la clave pública del JWKS de Cognito (`/.well-known/jwks.json`). |
+| **D · Por Detrás** | *¿Qué origen acepta tu CORS, y qué pasa si te llaman desde otro?* | `origin: *` («para que funcionara»), o creer que el CORS es un mecanismo de control de acceso a la API. | Acepta exclusivamente `http://localhost:4200`. Si se llama desde otro origen en navegador, el navegador bloquea la respuesta. Si se llama con `curl`, la llamada pasa (CORS es política del navegador, la autenticación por token es el control real). |
+| **E · Origen** | *¿De dónde salieron estos juegos, y qué pasa si corro el seed en una máquina limpia?* | «Los escribí a mano», o el archivo `catalogo.json` existe pero no hay script de seed. | Provienen de una API externa real (FreeToGame / RAWG). Si se borra `catalogo.json` y se corre `npm run seed`, el script consume la API externa, mapea el DTO y regenera el archivo de persistencia idéntico. |
+| **Transversal** | *¿Qué de todo esto está en la nube y qué no?* | Cree que el API Gateway es de AWS, o no sabe qué levantó él mismo en su máquina. | **Lo ÚNICO en la nube es el User Pool de AWS Cognito**. El Frontend Angular, el Gateway NestJS, el BFF NestJS y los Microservicios corren 100% en la máquina local. |
+| **Transversal** | *Si mañana entra un quinto microservicio, ¿qué tienes que tocar?* | «Habría que agregar la URL nueva en el Angular». | Se toca el BFF (para agregar la llamada interna y mapear el DTO agregado) y opcionalmente el Gateway si expone una nueva ruta `/v1/`. **En Angular NO se toca ninguna URL**, porque Angular solo conoce al Gateway. |
+
+---
+
+### 5. Análisis Modelo de la Parada B3 (La Más Discriminante de la Defensa)
+
+**Pregunta del Docente:** *«¿De dónde sale el usuario cuyas licencias devuelves?»*
+
+**Respuesta Técnica Modelo (Aplicando los 4 Pasos):**
+> *«Sale del claim `sub`. Te muestro en el código: acá en el BFF el `JwtGuard` ya verificó el token y dejó el payload en `request.user`; en esta línea tomo `req.user.sub` y se lo paso al microservicio de biblioteca.*
+> 
+> *Fíjate que la ruta `/v1/biblioteca` no tiene ningún parámetro de usuario, a propósito: si recibiera el ID por query o por body, cualquiera con un token válido podría pedir la biblioteca de otro usuario cambiando un número (vulnerabilidad BOLA / IDOR).*
+> 
+> *De hecho, al principio me pasó al revés: la primera versión la hice con `/v1/biblioteca/:usuarioId` porque era cómodo para probar con Postman. Lo dejé así hasta que entré con dos cuentas distintas en Cognito, le pasé el ID del otro usuario y me devolvió sus juegos. Ahí entendí el problema y lo cambié.*
+> 
+> *Y te lo demuestro en vivo con estas dos pestañas de curl: mismo endpoint, token de la cuenta A $\rightarrow$ devuelve estos 3 juegos; token de la cuenta B $\rightarrow$ devuelve estos 2 juegos. No cambié nada en la URL ni en los parámetros, solo el token.»*
+
+* **Extracto de Código Clave** (`vidalstore-backend/src/bff/biblioteca/bff-biblioteca.controller.ts:L20-L31`):
+  ```typescript
+  @Get()
+  @UseGuards(BffAuthGuard)
+  async obtenerBiblioteca(
+    @CurrentUser('sub') usuarioSub: string,
+    @Req() req?: any,
+  ) {
+    if (!usuarioSub) {
+      throw new UnauthorizedException('No se pudo resolver la identidad a partir del claim sub.');
+    }
+    // Llama al microservicio con el sub resuelto criptográficamente:
+    const [licencias, catalogo] = await Promise.all([...]);
+  ```
+* **Comando de Prueba en Vivo (Terminal)**:
+  ```bash
+  # Probar con dos tokens distintos: cada uno devuelve SOLO sus juegos
+  curl -s -H "Authorization: Bearer $TOKEN_USUARIO_A" http://localhost:8080/v1/biblioteca | jq '.[].juego.titulo'
+  curl -s -H "Authorization: Bearer $TOKEN_USUARIO_B" http://localhost:8080/v1/biblioteca | jq '.[].juego.titulo'
+  ```
+
+---
+
+### 6. La Modificación Señalada (Minuto 12 a 14)
+
+En este bloque de 2 minutos, el docente pide a cada integrante una modificación puntual sobre un frente del proyecto que **no construyó él**.
+
+* **Cómo se rinde**: **No se programa en vivo**. Se abre el archivo en el editor, se sitúa el cursor en la línea exacta y se explica qué se escribiría y qué efecto tendría en el sistema.
+* **Casos Clásicos con Código y Comprobación**:
+  1. *«¿Dónde y cómo agregarías una ruta que solo puedan consultar los administradores?»*
+     * **Código**: En `bff-licencias.controller.ts` agregar `@UseGuards(BffAuthGuard, GroupsGuard)` y `@RequireGroups('administradores')`. En `gateway.controller.ts` mapear la ruta proxy con el mismo decorador.
+     * **Comando**: `curl -i -H "Authorization: Bearer $TOKEN_JUGADOR" http://localhost:8080/v1/admin/licencias` $\rightarrow$ `403 Forbidden`.
+  2. *«¿Qué pasa y qué se rompe si comento esta línea en el interceptor de Angular?»*
+     * **Código**: En `src/app/auth/token.interceptor.ts` comentar `setHeaders['Authorization'] = ...`.
+     * **Comando**: Angular compila bien, pero las peticiones salen limpias: `curl -i http://localhost:8080/v1/catalogo` $\rightarrow$ `HTTP/1.1 401 Unauthorized` inmediato en Gateway.
+  3. *«¿Qué sucedería si configuro en el Gateway el client_id del App Client 2?»*
+     * **Código**: En `vidalstore-gateway/.env` cambiar `COGNITO_CLIENT_ID`. En `auth.service.ts` fallará `if (expectedClientId && cognitoPayload.client_id !== expectedClientId)`.
+     * **Comando**: Al llamar con token de SPA: `HTTP/1.1 401 Unauthorized` ("Client ID no autorizado").
+  4. *«¿Qué pasa si quitas un microservicio del Promise.all en el BFF?»*
+     * **Código**: En `bff-biblioteca.controller.ts` quitar `this.bffHttpService.request(catalogoUrl)`.
+     * **Comando**: La biblioteca responde licencias pero `juego: null`; la interfaz queda sin portadas ni títulos.
+
+---
+
+### 7. La Pregunta del Botón COMPRAR (Minuto 14 a 15)
+
+**Pregunta del Docente:** *«Si el usuario ya tiene la licencia de un juego, ¿qué debe hacer el botón COMPRAR en la interfaz? ¿Ocultarse, deshabilitarse, o permitir el clic y que el servidor responda con error?»*
+
+* **Respuesta Técnica**: *«En la UI lo deshabilito por experiencia de usuario, pero la regla de negocio y la seguridad NUNCA se delegan al cliente: el backend siempre valida idempotencia y corta con 409 Conflict si llega la petición.»*
+* **Extracto de Código Clave** (`vidalstore-backend/src/microservicios/biblioteca/biblioteca.service.ts:L49-L54`):
+  ```typescript
+  const licenciaExistente = this.buscarLicenciaPorUsuarioYJuego(usuarioSub, licenciaDatos.juegoId);
+  if (licenciaExistente) {
+    throw new ConflictException(
+      `El usuario ya posee una licencia activa para el juego con ID '${licenciaDatos.juegoId}'.`
+    );
+  }
+  ```
+* **Comando de Prueba en Vivo (Terminal)**:
+  ```bash
+  # Primera compra: 201 Created
+  curl -i -X POST http://localhost:8080/v1/compras -H "Authorization: Bearer $TOKEN_JUGADOR" -H "Content-Type: application/json" -d '{"juegoId":"1"}'
+  # Segunda compra del mismo juego: 409 Conflict
+  curl -i -X POST http://localhost:8080/v1/compras -H "Authorization: Bearer $TOKEN_JUGADOR" -H "Content-Type: application/json" -d '{"juegoId":"1"}'
+  ```
+
+---
+
+### 8. Preparación: La Bitácora de Errores Propios
+
+1. **Error de App Client con Secreto**: SPA pública en Angular no puede almacenar secretos $\rightarrow$ recrear App Client sin secret.
+2. **Error de Token Expirado en Pruebas**: Token expiró a los 60 minutos (`exp`) $\rightarrow$ 401 Unauthorized en curl.
+3. **Error de Trampa de Cognito**: Auto-registro deja `cognito:groups` vacío $\rightarrow$ fallback a `jugadores` en `groups.guard.ts`.
+4. **Error de CORS en Backend**: Configurar CORS en BFF $\rightarrow$ comprender que CORS solo aplica a navegadores en el Gateway.
+5. **Error de Whitelist en Interceptor**: Token Bearer filtrado a Google Fonts $\rightarrow$ whitelist estricta `req.url.startsWith('http://localhost:8080')`.
+
+---
+
+## Bloque D: Reglas de Negocio, Modelo de Datos e Identificadores (UUID vs Sub vs Integer)
+
+---
+
+### D.1. ¿Cómo se gestionaron y modelaron las licencias en el sistema? (Ciclo de Vida y Dueño del Agregado)
+
+* **Pregunta del Docente**: *«Muestra el modelo de licencias. ¿Cómo se gestionan, quién es el dueño de esos datos, cómo nacen y cómo se relacionan con los juegos y usuarios?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Modelé la entidad `Licencia` con `id` (UUID v4), `juegoId`, `usuarioSub` (claim `sub`), `fechaAdquisicion`, `codigoCanje`, `estadoPago: 'aprobado'` y `precioPagado`. Biblioteca es el único dueño (*Single Source of Truth*), respaldado en `MemoryStorageService` y persistido en `data/licencias.json`.
+  2. **Qué problema resuelve**: Desacopla la transacción de compra de la titularidad digital permanente. Compras valida el pago y delega por HTTP interno a Biblioteca la emisión de la licencia.
+  3. **Qué descarté**: Descarté embeber licencias dentro del usuario en Cognito y descarté que Catálogo gestione compras.
+  4. **Cómo lo compruebo**: Mostrando `crearLicencia()` en `biblioteca.service.ts` y verificando `data/licencias.json`.
+* **Extracto de Código Clave** (`vidalstore-backend/src/models/licencia.model.ts`):
+  ```typescript
+  export interface Licencia {
+    id: string; // UUID v4 único
+    juegoId: string; // ID foráneo del catálogo
+    usuarioSub: string; // Claim 'sub' inmutable de Cognito
+    fechaAdquisicion: string; // ISO 8601
+    codigoCanje?: string; // Formato VS-XXXXXXXXXXXXXXXX
+    estadoPago?: 'aprobado' | 'rechazado';
+    precioPagado?: number;
+  }
+  ```
+
+---
+
+### D.2. ¿Por qué se usa ese tipo de ID para el usuario (`sub` UUID) y por qué NO usar su email o su username?
+
+* **Pregunta del Docente**: *«¿Por qué en las licencias guardas `usuarioSub` en lugar del correo electrónico (`email`) o el nombre de usuario (`username`)? ¿Qué ganaron con esa decisión?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Utilicé como clave foránea el claim `sub` (Subject) emitido por AWS Cognito (UUID v4 inmutable de 36 caracteres), extraído de `req.user.sub`.
+  2. **Qué problema resuelve**:
+     * **Inmutabilidad Absoluta**: El email o username pueden cambiar; el `sub` es inmutable de por vida (no se pierden compras).
+     * **Privacidad por Diseño (Zero PII Leakage / GDPR)**: El `sub` es un UUID opaco sin datos personales. Microservicios y logs no filtran correos ni RUTs.
+     * **Desacoplamiento del Identity Provider**: Si cambiamos Cognito por Auth0 o Keycloak, el modelo no cambia.
+  3. **Qué descarté**: Descarté email o username como claves primarias, y descarté IDs locales autoincrementales de usuario.
+  4. **Cómo lo compruebo**: Comparando el JWT decodificado con `data/licencias.json`.
+* **Extracto de Código Clave** (`vidalstore-backend/src/microservicios/biblioteca/biblioteca.service.ts:L64-L66`):
+  ```typescript
+  buscarLicenciasPorUsuario(usuarioSub: string): Licencia[] {
+    return this.storageService.buscarLicenciasPorUsuarioSub(usuarioSub);
+  }
+  ```
+
+---
+
+### D.3. ¿Por qué la licencia usa un UUID v4 (`randomUUID`) en lugar de un entero auto-incremental (1, 2, 3...)?
+
+* **Pregunta del Docente**: *«¿Por qué el ID de la licencia es un UUID (`randomUUID()`) y no un número secuencial simple como 1, 2, 3...?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Cada nueva licencia recibe `id: randomUUID()`, generado con `node:crypto`.
+  2. **Qué problema resuelve**:
+     * **Sistemas Distribuidos sin Cuello de Botella Central**: En microservicios, los autoincrementales exigen base de datos centralizada con bloqueos. El UUID v4 se genera descentralizado en cualquier nodo con colisión despreciable ($2^{122}$).
+     * **Confidencialidad y Anti-Scraping**: Evita que competidores deduzcan ventas diarias y que atacantes enumeren URLs secuenciales (`/licencias/103`).
+  3. **Qué descarté**: Descarté secuencias numéricas (`id: ++contador`).
+  4. **Cómo lo compruebo**: Generando compras consecutivas y revisando los IDs únicos resultantes.
+* **Extracto de Código Clave** (`vidalstore-backend/src/storage/memory-storage.service.ts:L202-L206`):
+  ```typescript
+  const nuevaLicencia: Licencia = {
+    id: randomUUID(), // UUID v4 RFC 4122 (128 bits, sin colisión distribuida)
+    juegoId: datos.juegoId,
+    usuarioSub: datos.usuarioSub,
+    fechaAdquisicion: new Date().toISOString(),
+  ```
+
+---
+
+### D.4. ¿Por qué los juegos del catálogo tienen un ID distinto (números como `"452"`, `"540"`) que las licencias (UUIDs)? ¿Cómo conviven ambos?
+
+* **Pregunta del Docente**: *«Veo que en el catálogo los IDs son números como "452", pero las licencias son UUIDs. ¿Por qué esa diferencia y cómo conviven ambos?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Catálogo tipa `id: string` con valores numéricos seriales de la API FreeToGame (`seed.ts`). Licencia guarda `juegoId: string` como clave foránea.
+  2. **Qué problema resuelve**: Respeta la separación entre catálogo de publisher externo y transacciones internas de la plataforma. Mantener el ID original de FreeToGame preserva la trazabilidad externa.
+  3. **Qué descarté**: Descarté sobreescribir los IDs de FreeToGame con nuevos UUIDs en el seed.
+  4. **Cómo lo compruebo**: Comparando `data/catalogo.json` con `data/licencias.json`.
+* **Extracto de Código Clave** (`vidalstore-backend/data/seed.ts` vs `licencia.model.ts`):
+  ```typescript
+  // seed.ts: FreeToGame entrega id numérico, se estandariza a string:
+  id: String(juegoExterno.id),
+  // licencia.model.ts: almacena juegoId tipado como string:
+  juegoId: string,
+  ```
+
+---
+
+### D.5. ¿Cómo se garantiza la unicidad e idempotencia de una licencia? ¿Qué regla de negocio impide duplicar compras?
+
+* **Pregunta del Docente**: *«¿Qué regla de negocio impide que un usuario compre dos veces el mismo juego y cómo está implementada en el código?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En `biblioteca.service.ts`, `crearLicencia()` ejecuta `buscarLicenciaPorUsuarioYJuego(usuarioSub, juegoId)`. Si existe, arroja `ConflictException` (HTTP 409 Conflict).
+  2. **Qué problema resuelve**: Comercialización de software digital: la posesión de una licencia digital es unívoca. Previene cobros dobles por clics repetidos o reintentos de red.
+  3. **Qué descarté**: Descarté delegar la regla a la interfaz gráfica y descarté responder `200 OK` cobrando dos veces.
+  4. **Cómo lo compruebo**: Disparando dos `POST /v1/compras` con el mismo `juegoId`.
+* **Extracto de Código Clave** (`vidalstore-backend/src/microservicios/biblioteca/biblioteca.service.ts:L49-L54`):
+  ```typescript
+  const licenciaExistente = this.buscarLicenciaPorUsuarioYJuego(usuarioSub, licenciaDatos.juegoId);
+  if (licenciaExistente) {
+    throw new ConflictException(
+      `El usuario ya posee una licencia activa para el juego con ID '${licenciaDatos.juegoId}'.`
+    );
+  }
+  ```
+* **Comando de Prueba en Vivo (Terminal)**:
+  ```bash
+  # Primera llamada -> 201 Created
+  curl -i -X POST http://localhost:8080/v1/compras -H "Authorization: Bearer $TOKEN_JUGADOR" -H "Content-Type: application/json" -d '{"juegoId":"1"}'
+  # Segunda llamada idéntica -> 409 Conflict
+  curl -i -X POST http://localhost:8080/v1/compras -H "Authorization: Bearer $TOKEN_JUGADOR" -H "Content-Type: application/json" -d '{"juegoId":"1"}'
+  ```
+
+---
+
+### D.6. ¿Qué es y cómo se genera el `codigoCanje` (`VS-XXXXXXXXXXXXXXXX`)?
+
+* **Pregunta del Docente**: *«¿Para qué sirve el campo `codigoCanje` en la licencia y con qué criterio se genera?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Al emitir la licencia en `biblioteca.service.ts`:
+     ```typescript
+     codigoCanje: `VS-${randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase()}`
+     ```
+  2. **Qué problema resuelve**: Separa la titularidad legal en VidalStore de la clave de activación (CD-Key) requerida por el jugador para canjear en Steam o Epic Games.
+  3. **Qué descarté**: Descarté `Math.random()` (predecible). Usamos `randomUUID()` con entropía criptográfica CSPRNG.
+  4. **Cómo lo compruebo**: Inspeccionando las licencias devueltas por `/v1/biblioteca`.
+* **Extracto de Código Clave** (`vidalstore-backend/src/microservicios/biblioteca/biblioteca.service.ts:L59`):
+  ```typescript
+  return this.storageService.agregarLicencia({
+    ...licenciaDatos,
+    usuarioSub,
+    codigoCanje: `VS-${randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase()}`,
+    estadoPago: 'aprobado',
+  });
+  ```
+
+---
+
+### D.7. ¿Cómo se previene el fraude IDOR / BOLA al consultar la biblioteca?
+
+* **Pregunta del Docente**: *«Si quiero consultar las licencias de otro usuario con mi token legítimo, ¿dónde me frena el sistema?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: La ruta es `/v1/biblioteca` (sin parámetros de usuario). El backend extrae el usuario de `req.user.sub` firmado por Cognito.
+  2. **Qué problema resuelve**: Mitiga la vulnerabilidad #1 OWASP API: BOLA/IDOR. Nadie puede alterar un parámetro en URL para espiar bibliotecas ajenas.
+  3. **Qué descarté**: Descarté confiar en `@Param('usuarioId')` o `@Body('usuarioSub')`.
+  4. **Cómo lo compruebo**: Probando con dos tokens distintos (Parada B.3).
+* **Extracto de Código Clave** (`vidalstore-backend/src/bff/biblioteca/bff-biblioteca.controller.ts:L22-L24`):
+  ```typescript
+  @Get()
+  @UseGuards(BffAuthGuard)
+  async obtenerBiblioteca(@CurrentUser('sub') usuarioSub: string) {
+    // El sub viene del token JWT verificado por el guard, NUNCA del cliente
+    return this.bffHttpService.request(this.bffHttpService.bibliotecaUrl, 'GET', '/v1/biblioteca');
+  ```
+
+---
+
+### D.8. ¿Cómo interactúan los roles de negocio (`administradores` vs `jugadores`) con las licencias?
+
+* **Pregunta del Docente**: *«¿Cómo manejan la administración y revocación de licencias según el rol del usuario?»*
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Rutas `/v1/licencias` y `DELETE /v1/licencias/:id` protegidas con `@RequireGroups('administradores')` y `GroupsGuard`.
+  2. **Qué problema resuelve**: Permite al personal administrativo auditar y revocar licencias sin permitir a jugadores invocar estas funciones.
+  3. **Qué descarté**: Descarté confiar en banderas del cliente como `isAdmin: true`.
+  4. **Cómo lo compruebo**: Jugador recibe 403 Forbidden; Administrador recibe 200 OK.
+* **Extracto de Código Clave** (`vidalstore-gateway/src/gateway.controller.ts:L83-L86`):
+  ```typescript
+  @Delete('licencias/:licenciaId')
+  @UseGuards(AuthGuard, GroupsGuard)
+  @RequireGroups('administradores')
+  async revocarLicencia(@Param('licenciaId') licenciaId: string, @Request() req: ExpressRequest) {
+    return this.gatewayService.forward('DELETE', `/v1/licencias/${licenciaId}`, req);
+  }
+  ```
+* **Comando de Prueba en Vivo (Terminal)**:
+  ```bash
+  # Jugador intentando revocar: 403 Forbidden
+  curl -i -X DELETE -H "Authorization: Bearer $TOKEN_JUGADOR" http://localhost:8080/v1/licencias/xyz-123
+  # Administrador revoca con éxito: 200 OK
+  curl -i -X DELETE -H "Authorization: Bearer $TOKEN_ADMIN" http://localhost:8080/v1/licencias/xyz-123
+  ```
+
+

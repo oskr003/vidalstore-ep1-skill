@@ -49,12 +49,14 @@ def run_cmd(cmd, cwd):
         return ""
 
 def audit_git():
-    print_header("1. AUDITORÍA DE GIT, COMMITS Y REPOSITORIOS")
+    print_header("1. AUDITORÍA DE GIT, COMMITS Y REPOSITORIOS (CLASE D6)")
     repos = [("vidalstore-frontend", FRONTEND_DIR), 
              ("vidalstore-gateway", GATEWAY_DIR), 
              ("vidalstore-backend", BACKEND_DIR)]
     
     total_commits = 0
+    all_authors = set()
+    
     for name, path in repos:
         if not os.path.exists(path):
             check_fail(f"Repositorio no encontrado: {name}", f"Verificar que la carpeta {name} exista en la raíz.")
@@ -70,11 +72,58 @@ def audit_git():
         count = int(count_str) if count_str.isdigit() else 0
         total_commits += count
         
-        print(f"  • {name}: Rama {BOLD}{branch}{RESET} | Commits: {BOLD}{count}{RESET}")
+        # Autores de commits (D6 Slide 4: commits propios obligatorios)
+        authors_raw = run_cmd('git log --format="%an"', path)
+        authors = set(a.strip() for a in authors_raw.splitlines() if a.strip())
+        all_authors.update(authors)
+        
+        print(f"  • {name}: Rama {BOLD}{branch}{RESET} | Commits: {BOLD}{count}{RESET} | Autores: {', '.join(authors) if authors else 'N/A'}")
+        
+        # Comprobar rama actual
+        if branch != "main":
+            check_warn(f"{name} está en rama '{branch}'. Recuerda que 'main' es la que clona el docente para calificar.",
+                       "Mezclar 'dev' hacia 'main' antes de la entrega y declarar el hash de 'main' en AVA (D6 Slide 11).")
+        
+        # Comprobar .gitignore (D6 Slides 7-9)
+        gitignore_path = os.path.join(path, ".gitignore")
+        if os.path.exists(gitignore_path):
+            gi_content = open(gitignore_path).read()
+            missing_rules = []
+            if ".env" not in gi_content:
+                missing_rules.append(".env")
+            if "node_modules" not in gi_content:
+                missing_rules.append("node_modules")
+            if "dist" not in gi_content:
+                missing_rules.append("dist")
+            
+            if missing_rules:
+                check_warn(f"{name}/.gitignore le falta ignorar: {', '.join(missing_rules)}.",
+                           f"Agregar las reglas faltantes a {name}/.gitignore según D6 Slide 8.")
+            else:
+                check_pass(f"{name}/.gitignore contiene reglas básicas (.env, node_modules, dist).")
+        else:
+            check_fail(f"Falta archivo .gitignore en {name}.",
+                       f"Crear .gitignore ignorando node_modules/, dist/, .env y certificados (D6 Slide 8).")
+        
+        # Comprobar si hay .env versionado en el índice de Git (D6 Slide 7 y 11)
+        tracked_env = run_cmd('git ls-files "*.env" "*.env.local" "*.env.production"', path)
+        if tracked_env:
+            check_fail(f"¡ALERTA GRAVE! Archivo(s) de entorno versionado(s) en {name}: {tracked_env}",
+                       "Ejecutar 'git rm --cached .env' y ROTAR OBLIGATORIAMENTE las credenciales en AWS Cognito/IAM (D6 Slide 7).")
     
     print(f"\n  Total de commits acumulados en el proyecto: {BOLD}{total_commits}{RESET}")
+    print(f"  Autores detectados en el historial: {BOLD}{', '.join(all_authors)}{RESET}")
+    
+    if len(all_authors) >= 3:
+        check_pass(f"Historial con autoría compartida por los 3 integrantes ({len(all_authors)} autores).")
+    elif len(all_authors) == 1:
+        check_warn(f"Solo se detectó un autor ({list(all_authors)[0]}) en el historial de Git.",
+                   "D6 Slide 4: 'Se exige que todos los integrantes tengan commits propios... es requisito de admisibilidad'. Asegurar commits de todos.")
+    else:
+        check_pass(f"Historial con múltiples autores ({len(all_authors)} autores).")
+    
     if 100 <= total_commits <= 200:
-        check_pass(f"Cumple con el rango estimado por Umbingelelo (100 a 200 commits).")
+        check_pass(f"Cumple con el rango estimado por Umbingelelo (100 a 200 commits en total).")
     elif total_commits < 100:
         check_warn(f"Actualmente tienes {total_commits} commits. Umbingelelo estimó entre 100 y 200 commits en total.",
                    "Continuar realizando commits descriptivos y atómicos por cada funcionalidad o test.")
@@ -110,8 +159,12 @@ def audit_frontend():
             check_fail("La ruta /catalogo debe estar protegida con un guard de sesión.",
                        "Agregar canActivate: [sesionGuard] en app.routes.ts.")
     
-    interceptor_ts = os.path.join(FRONTEND_DIR, "src/app/interceptors/token.interceptor.ts")
-    if os.path.exists(interceptor_ts):
+    interceptor_candidates = [
+        os.path.join(FRONTEND_DIR, "src/app/auth/token.interceptor.ts"),
+        os.path.join(FRONTEND_DIR, "src/app/interceptors/token.interceptor.ts"),
+    ]
+    interceptor_ts = next((p for p in interceptor_candidates if os.path.exists(p)), None)
+    if interceptor_ts:
         content = open(interceptor_ts).read()
         urls = re.findall(r'http://localhost:\d+', content)
         if len(set(urls)) == 1 and "8080" in urls[0]:
@@ -119,6 +172,8 @@ def audit_frontend():
         elif len(set(urls)) > 1:
             check_warn("El interceptor tiene más de una dirección en su lista blanca.",
                        "El frontend solo debe comunicarse con el API Gateway (http://localhost:8080).")
+    else:
+        check_fail("No se encontró token.interceptor.ts en el frontend.")
 
     vidalstore_ts = os.path.join(FRONTEND_DIR, "src/app/services/vidalstore.ts")
     if os.path.exists(vidalstore_ts):
@@ -146,9 +201,16 @@ def audit_gateway():
             check_fail("CORS no está configurado explícitamente en el Gateway.",
                        "Agregar app.enableCors({ origin: 'http://localhost:4200', methods: 'GET,POST,PUT,DELETE,OPTIONS' })")
 
-    auth_guard = os.path.join(GATEWAY_DIR, "src/auth/auth.guard.ts")
-    if os.path.exists(auth_guard):
-        content = open(auth_guard).read()
+    auth_files = [
+        os.path.join(GATEWAY_DIR, "src/auth/auth.guard.ts"),
+        os.path.join(GATEWAY_DIR, "src/auth/auth.service.ts"),
+    ]
+    content = ""
+    for f in auth_files:
+        if os.path.exists(f):
+            content += open(f).read() + "\n"
+
+    if content:
         validations = []
         if "jwks" in content.lower() or "publickey" in content.lower() or "verify" in content.lower():
             validations.append("Firma/JWKS")
@@ -206,7 +268,7 @@ def audit_backend():
                     pass
 
     # Compras (idempotencia)
-    compras_content = "".join(v for k, v in backend_controllers.items() if "compras" in k.lower())
+    compras_content = "".join(v for k, v in backend_controllers.items() if "compras" in k.lower() or "biblioteca" in k.lower())
     if "ConflictException" in compras_content:
         check_pass("POST /v1/compras implementa idempotencia respondiendo 409 ante licencias ya existentes.")
     else:

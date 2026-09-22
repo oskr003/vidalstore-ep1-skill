@@ -3,12 +3,13 @@
 
 Esta skill es una suite integral de aseguramiento de calidad técnica, control de arquitectura y preparación para la defensa individual de la Evaluación Parcial N°1 (Caso VidalStore).
 
-Integra de forma estricta las cinco fuentes normativas del encargo:
+Integra de forma estricta las seis fuentes normativas del encargo:
 1. **`EP1-aclaraciones.pdf`**: Documento oficial del profesor Cristian Calderón (`Umbingelelo`), que rige sobre el enunciado.
 2. **`EP1-Caso-VidalStore.pdf`**: Enunciado de negocio, arquitectura objetivo y rúbrica oficial (Indicadores IE1 a IE10).
 3. **`Pulso.pdf`**: Guía oficial del Laboratorio L4 ("La cadena completa") y preparación metodológica ("El puente a EP1: tramos 10 al 12"), con las 8 preguntas oficiales de la defensa y la resolución de la trampa de Cognito.
-4. **Resoluciones del foro oficial de GitHub**: Criterios de evaluación, Hosted UI, idempotencia y defensa en profundidad.
-5. **Plan de Trabajo del Proyecto**: Flujo de ramas GitFlow y distribución técnica por integrante.
+4. **`D6-Git-en-serio-y-defender-una-arquitectura.html`**: Clase magistral oficial de Semana 7 sobre entrega técnica, higiene de Git, el reloj de 15 minutos, los 5 flujos de punta a punta y el método de respuesta en 4 pasos.
+5. **Resoluciones del foro oficial de GitHub**: Criterios de evaluación, Hosted UI, idempotencia y defensa en profundidad.
+6. **Plan de Trabajo del Proyecto**: Flujo de ramas GitFlow y distribución técnica por integrante.
 
 ---
 
@@ -386,4 +387,38 @@ Tabla de síntomas extraída de `Pulso.pdf` (Páginas 72–74) para depuración 
 | Token falla con `401` repentinamente tras una hora | Los tokens de AWS Cognito expiran a los 60 minutos. | Volver a iniciar sesión en la Hosted UI para obtener un nuevo token vigente. |
 | Usuario recién registrado recibe `403` en todo | Cognito no le asignó ningún grupo (trampa del auto-registro). | Verificar que el guard asigne `jugadores` por defecto (Salida A) o que el trigger Lambda esté activo (Salida B). |
 | `400` en `POST` desde Gateway, pero `201` directo al BFF | El Gateway no reenvió el cuerpo de la petición en el fetch. | Agregar `body: JSON.stringify(body)` y `Content-Type: application/json` en el proxy del Gateway. |
+
+---
+
+## 11. Metodología Oficial de Defensa Técnica · Clase D6 (El Reloj de 15 Minutos y los 5 Flujos)
+
+La clase magistral D6 del profesor Cristian Calderón (`Umbingelelo`) define el estándar con el que se evalúa la presentación individual (60% de la nota final):
+
+### Cronograma del Reloj de 15 Minutos
+* **Minutos 0 a 1**: Los integrantes declaran procesos activos y sus puertos.
+* **Minutos 1 a 7**: Conducción del **Flujo A** (un integrante) y **Flujo B** (otro integrante). Nadie conduce dos flujos seguidos.
+* **Minutos 7 a 12**: Conducción de los **Flujos C y D**, y 30 segundos del **Flujo E** (abrir el script `seed.ts`).
+* **Minutos 12 a 14**: **Modificación señalada**: una por integrante sobre un archivo que no construyó él (ubicar el archivo, poner el cursor en la línea y explicar qué escribiría y qué pasaría).
+* **Minutos 14 a 15**: Pregunta del botón COMPRAR (evaluación de fundamentación técnica de experiencia de usuario vs seguridad e idempotencia en backend).
+
+### Los 5 Flujos de Punta a Punta
+1. **Flujo A (Identidad)**: Registro/login con Hosted UI + PKCE. Resolución de la trampa de Cognito (cuenta nueva en grupo `jugadores`). `sub` (quién eres) vs `cognito:groups`/`scope` (qué puedes hacer).
+2. **Flujo B (Lo propio)**: `GET /v1/biblioteca` resuelto exclusivamente por el claim `sub` del JWT verificado, jamás por parámetro de URL/body. Una sola llamada de red del frontend al Gateway.
+3. **Flujo C (Rol insuficiente)**: Jugador intenta revocar licencia (`DELETE /v1/licencias/:id`) $\rightarrow$ el servidor backend responde `403 Forbidden`. La seguridad reside en el backend, no en ocultar el botón en la UI.
+4. **Flujo D (Por detrás / Perímetro)**: Llamada directa a BFF o microservicio sin token $\rightarrow$ `401 Unauthorized`. Token alterado $\rightarrow$ `401 Unauthorized`. CORS restringido a `localhost:4200` solo en Gateway.
+5. **Flujo E (Origen / Trazabilidad)**: Seed en `data/` consume API externa real hacia JSON versionado.
+
+### Las 5 Ventanas Obligatorias al Iniciar el Turno
+1. **Terminal**: Procesos y puertos corriendo (Angular 4200, Gateway 8080, BFF 3000/3001, Microservicios 3002..3005).
+2. **Navegador**: App con sesión recién iniciada, pestaña Red limpia y Application mostrando `sessionStorage`.
+3. **Cliente REST o curl**: Dos tokens vigentes listos (jugador y administrador) para probar 403 vs 200, y llamada directa sin token para 401.
+4. **Editor de Código**: Interceptor de Angular y Guards de NestJS ya abiertos.
+5. **Consola AWS Cognito**: User Pool con grupos, usuarios y los dos App Clients.
+
+### Framework de Respuesta en 4 Pasos (1 Minuto por Parada)
+1. **Qué hice**: Nombrar el componente o mecanismo exacto y mostrar la línea de código en el editor.
+2. **Qué problema resuelve**: Explicar la necesidad concreta de seguridad, rendimiento o arquitectura.
+3. **Qué descarté**: Nombrar explícitamente la alternativa técnica rechazada (el paso que más pesa, demuestra decisión propia).
+4. **Cómo lo compruebo**: Demostrarlo en vivo en la pantalla (pestaña Red, dos tokens en curl, etc.).
+
 

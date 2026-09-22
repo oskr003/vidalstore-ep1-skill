@@ -2,7 +2,7 @@
 name: vidalstore-ep1
 description: >-
   Auditoría, verificación estricta y preparación técnica integral para la Evaluación Parcial N°1 (EP1) Caso VidalStore de DSY1107 - Desarrollo Cloud Native I (DUOC UC).
-  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF o microservicios, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10), las precisiones de "EP1-aclaraciones.pdf" y las respuestas del profesor Umbingelelo en el foro.
+  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF o microservicios, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10), las precisiones de "EP1-aclaraciones.pdf", la clase magistral D6 ("Git en serio y defender una arquitectura") y las respuestas del profesor Umbingelelo en el foro.
 ---
 
 # VidalStore EP1 — Skill de Aseguramiento de Calidad y Cumplimiento al 100%
@@ -13,8 +13,14 @@ Integra las fuentes normativas obligatorias del encargo:
 1. **`EP1-aclaraciones.pdf`**: Documento oficial del profesor Cristian Calderón (`Umbingelelo`), el cual complementa el enunciado y rige sobre él.
 2. **`EP1-Caso-VidalStore.pdf`**: Enunciado de negocio, arquitectura objetivo y rúbrica oficial (indicadores IE1 a IE10).
 3. **`Pulso.pdf`**: Guía oficial del Laboratorio L4 ("La cadena completa") y preparación metodológica ("El puente a EP1: tramos 10 al 12") del profesor Cristian Calderón, con las 8 preguntas oficiales de la defensa, pruebas de la cadena y la resolución de la trampa de Cognito.
-4. **Resoluciones del foro GitHub (`Umbingelelo/DSY1107-Foro-2026-02`)**: Criterios de evaluación, commits estimados, Hosted UI, idempotencia y defensa en profundidad.
-5. **`Plan_VidalStore_EP1.pdf`**: Plan de trabajo específico del grupo (3 integrantes: David, Oscar e Iván).
+4. **`D6-Git-en-serio-y-defender-una-arquitectura.html`**: Clase magistral oficial de Semana 7 sobre entrega técnica, higiene de Git, el reloj de 15 minutos, los 5 flujos de defensa de punta a punta y el método de respuesta en 4 pasos.
+5. **Resoluciones del foro GitHub (`Umbingelelo/DSY1107-Foro-2026-02`)**: Criterios de evaluación, commits estimados, Hosted UI, idempotencia y defensa en profundidad.
+6. **`Plan_VidalStore_EP1.pdf`**: Plan de trabajo específico del grupo (3 integrantes: David, Oscar e Iván).
+
+> [!IMPORTANT]
+> **Ponderación Real de la EP1 (Clase D6 Slide 3):**
+> * **El Código (40% de la EP1)**: Lo entrega el grupo. Se congela a las 23:59 hrs en el commit de la rama `main` declarado en la plantilla de entrega en AVA, y se revisa después.
+> * **La Presentación / Defensa Técnica (60% de la EP1)**: Es **estrictamente individual**. La rinde cada integrante por separado y vale más que todo el código junto. Un estudiante con el sistema perfecto reprobará si no puede justificar las decisiones de arquitectura ni rastrear un dato por las 4 capas.
 
 ---
 
@@ -26,13 +32,14 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
    - Angular (`vidalstore-frontend`) habla **únicamente** con el API Gateway (`http://localhost:8080`).
    - Jamás invoca al BFF ni a los microservicios de forma directa.
    - El interceptor HTTP tiene una lista blanca explícita con **una sola entrada** (`http://localhost:8080`).
-   - **Distinción clave del profesor Umbingelelo**: Las rutas del frontend (`/catalogo`, `/biblioteca`, `/callback`, etc.) son rutas del enrutador SPA de Angular para saber qué componente renderizar y no tienen restricción. Las rutas que deben ir por una sola dirección son las llamadas de red hacia la API. Desde el frontend solo se hace **UNA llamada** a la API del Gateway por acción/vista; posteriormente el **BFF** puede realizar múltiples llamadas internas hacia los microservicios para orquestar y agregar los datos (ej: `GET /v1/biblioteca` llama internamente a biblioteca y catálogo; `DELETE /v1/licencias/:id` llama a biblioteca y auditoría).
+   - **Distinción clave del profesor Umbingelelo**: Las rutas del frontend (`/catalogo`, `/biblioteca`, `/callback`, etc.) son rutas del enrutador SPA de Angular para saber qué componente renderizar y no tienen restricción. Las rutas que deben ir por una sola dirección son las llamadas de red hacia la API. Desde el frontend solo se hace **UNA llamada** a la API del Gateway por acción/vista; posteriormente el **BFF** realiza múltiples llamadas internas concurrentes hacia los microservicios para orquestar y agregar los datos (ej: `GET /v1/biblioteca` llama internamente a biblioteca y catálogo; `DELETE /v1/licencias/:id` llama a biblioteca y auditoría).
 2. **Token en `sessionStorage`**:
    - Configurado en `main.ts` con `cognitoUserPoolsTokenProvider.setKeyValueStorage(sessionStorage)`.
    - Prohibido dejar el token en `localStorage` (hallazgo forense del caso).
 3. **Login Externo con Hosted UI**:
    - Obligatorio `signInWithRedirect()` de AWS Amplify (Authorization Code con PKCE).
    - Prohibido formularios propios de usuario/clave o flujos implícitos/ROPC.
+   - **Angular SPA sin secreto de cliente**: El App Client público de Angular jamás debe tener `client_secret` (crearlo con secret es el error clásico de SPA). `userPoolId` y `clientId` son públicos y van en el frontend.
 4. **Sin Vistas Públicas**:
    - El catálogo `/catalogo` y la biblioteca `/biblioteca` exigen sesión activa (`canActivate: [sesionGuard]`). En la plataforma solo son públicos el login/callback.
 5. **Defensa en Profundidad (Validación en Ambos Saltos)**:
@@ -62,18 +69,68 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - Si el usuario consulta su propia biblioteca/préstamos y está vacía, debe retornar **`200 OK` con `[]`**, jamás 403 ni 404 (evita vulnerabilidad de enumeración).
     - Verbos HTTP no soportados responden **`405 Method Not Allowed`**.
 13. **CORS Estricto**:
-    - Únicamente en el Gateway (`app.enableCors({ origin: 'http://localhost:4200' })`).
+    - Únicamente en el Gateway (`app.enableCors({ origin: 'http://localhost:4200' })`). Prohibido `origin: *`.
     - Prohibido configurar CORS en el BFF o microservicios.
-14. **Higiene de Repositorios y Git**:
-    - Repositorios separados y privados.
-    - Flujo GitFlow: `main` recibe merges de `dev`, y `dev` de `feature/...`.
-    - Docente (`Umbingelelo`) agregado como colaborador en **todos** los repositorios.
-    - Meta estimada de commits: **entre 100 y 200 commits en total** entre todos los repositorios.
-    - Cero secretos commiteados: verificación obligatoria con `git grep -iE "password|secret|token|cookie"`.
+14. **Higiene de Repositorios, Git y Checklist de Entrega (D6 Slides 4–11)**:
+    - **Historial de Git como Evidencia de Autoría**: Es requisito de admisibilidad obligatorio que **todos los integrantes tengan commits propios**. Un repositorio donde todos los commits pertenecen a una sola persona genera un problema de evaluación antes de comenzar a defender.
+    - **Mensajes de Commit con Sentido**: Los commits deben explicar qué cambió y por qué (ej: `Valida el client_id del token en el guard del BFF`; prohibido `cambios`, `asdf`, `arreglos`).
+    - **Flujo de Ramas para Grupo Chico (2–3 integrantes)**:
+      - `main`: Siempre funciona. Es la rama que clona el docente y de donde se extrae el hash para la entrega.
+      - Ramas cortas de feature (`feat/guard-jwt`, duración 2–3 días) que van a `dev`.
+      - Pull Request obligatorio para que el compañero revise el código antes de mezclar (garantiza que todos conozcan el código del proyecto).
+      - `dev` se mezcla a `main` antes de la entrega final. Prohibido GitFlow sobrecargado con ramas de release innecesarias.
+    - **Distinción Estricta entre lo Molesto y lo Grave**:
+      - *Molesto (archivos generados)*: `node_modules/`, `dist/`, `.angular/`, `coverage/`, `*.log`, `.DS_Store`. Se resuelve agregando al `.gitignore`, ejecutando `git rm -r --cached` y haciendo commit.
+      - *Grave (secretos)*: `.env`, `*.pem`, `*.jks`, `credentials.json`, archivos con `clientSecret` o contraseñas. Si se commitea un secreto, **queda comprometido para siempre** en el historial, clones y caché de GitHub. Borrar el archivo NO alcanza: **la única solución real es rotar la credencial en AWS** donde se emitió.
+    - **Checklist de Última Hora antes de las 23:59**:
+      1. `git status` limpio en todos los repositorios.
+      2. `.gitignore` de Node y Angular verificado.
+      3. `dev` mezclado a `main` antes de congelar.
+      4. Docente (`cr.calderons` / `Umbingelelo`) agregado como colaborador en **todos** los repositorios privados.
+      5. **Hash del último commit de `main`** de cada repositorio declarado en el documento de entrega en AVA. Lo que no se declara no se califica.
 
 ---
 
-## 2. Mapa de Rutas del Sistema (Matriz de Permisos)
+## 2. Metodología Oficial de la Defensa Técnica (D6 Slides 13–24)
+
+La defensa individual dura exactamente **15 minutos cronometrados por grupo** y recorre flujos completos de punta a punta, no definiciones teóricas sueltas.
+
+### El Reloj de 15 Minutos
+| Tramo | Minutos | Qué Ocurre en la Sala |
+|---|:---:|---|
+| **Paso 1: Procesos y Puertos** | **0 a 1** | Todos los integrantes declaran qué procesos corren y en qué puerto (Angular `4200`, Gateway `8080`, BFF `3000`/`3001`, Microservicios). |
+| **Paso 2: Flujos A y B** | **1 a 7** | Un integrante conduce el **Flujo A**, otro integrante conduce el **Flujo B**. Nadie conduce dos flujos seguidos. |
+| **Paso 3: Flujos C, D y E** | **7 a 12** | Conducción de los **Flujos C y D**, más 30 segundos del **Flujo E** (abrir el script de seed). |
+| **Paso 4: Modificación Señalada** | **12 a 14** | Una modificación por integrante sobre un frente que **no construyó él** (ubicar el archivo, poner el cursor en la línea y explicar qué escribiría y qué pasaría). |
+| **Paso 5: La Pregunta del Botón** | **14 a 15** | Pregunta del botón COMPRAR (se evalúa la fundamentación técnica y de negocio, no la postura). |
+
+> [!WARNING]
+> Se debe ingresar a la sala con el **sistema ya levantado y la sesión recién iniciada** (el token de Cognito expira en 1 hora). Si el sistema no levanta, solo hay 3 minutos de gracia; luego la defensa continúa en frío sobre el código.
+
+### Los 5 Flujos de Punta a Punta
+1. **Flujo A · Identidad**: Un anónimo se convierte en sujeto identificado. Registro y login con Hosted UI + PKCE. La cuenta nueva queda asignada al grupo `jugadores` (resolución de la trampa de Cognito). Distinción: `sub` dice quién eres; `cognito:groups` y `scope` dicen qué puedes hacer.
+2. **Flujo B · Lo Propio**: Un sujeto identificado lee lo suyo y solo lo suyo. `GET /v1/biblioteca` resuelto exclusivamente por el claim `sub`, nunca por parámetro. Una sola llamada de red del frontend al Gateway.
+3. **Flujo C · Rol Insuficiente**: Un sujeto intenta una acción por sobre su rol. Jugador llama a revocar licencia (`DELETE /v1/licencias/:id`) $\rightarrow$ el backend responde `403 Forbidden` (demostración de que la seguridad reside en el servidor y no en ocultar el botón en la UI).
+4. **Flujo D · Por Detrás (Defensa en Profundidad)**: Acceso directo sin pasar por el perímetro. Llamada directa a BFF o microservicio sin token $\rightarrow$ `401 Unauthorized`. Token alterado $\rightarrow$ `401 Unauthorized`. CORS restringido a `localhost:4200` solo en Gateway.
+5. **Flujo E · Origen y Trazabilidad**: El dato que se muestra tiene origen rastreable. El catálogo proviene de `data/seed.ts` consumiendo una API externa real hacia `data/catalogo.json`.
+
+### Las 5 Ventanas Obligatorias Abiertas al Iniciar el Turno
+1. **Terminal**: Procesos corriendo en sus respectivos puertos.
+2. **Navegador**: Aplicación con sesión recién iniciada, pestaña **Red** lista e inspeccionada, pestaña **Application** mostrando el token en `sessionStorage`.
+3. **Cliente REST o curl**: Dos tokens listos (jugador y administrador) para la misma ruta (demostrar `403` vs `200`), y llamada directa al BFF sin token (`401`).
+4. **Editor de Código**: Pestañas del interceptor HTTP de Angular y del guard de NestJS ya abiertas.
+5. **Consola de Cognito**: User pool con grupos, usuarios y los **dos app clients**. (Único componente en la nube; todo lo demás es local).
+
+### Framework de Respuesta en 4 Pasos (1 Minuto por Parada)
+Para responder cualquier decisión de arquitectura:
+1. **Qué hice**: Nombrar el componente o mecanismo exacto y mostrar la línea de código en el editor.
+2. **Qué problema resuelve**: Explicar la necesidad concreta de seguridad, rendimiento o arquitectura.
+3. **Qué descarté**: Nombrar explícitamente la alternativa técnica rechazada (el paso que más pesa, demuestra decisión y no copia).
+4. **Cómo lo compruebo**: Demostrarlo en vivo en la pantalla (pestaña Red, dos tokens en curl, etc.).
+
+---
+
+## 3. Mapa de Rutas del Sistema (Matriz de Permisos)
 
 | Método | Ruta | Autoriza por | Grupos / Condición | Código de Éxito | Códigos de Error |
 |---|---|---|---|:---:|:---:|
@@ -88,7 +145,7 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
 
 ---
 
-## 3. Procedimiento de Auditoría Técnica
+## 4. Procedimiento de Auditoría Técnica
 
 Cuando se active esta skill para revisar el estado del proyecto, seguir este orden de verificación:
 
@@ -101,8 +158,8 @@ El script evaluará:
 - Existencia y puertos de los servicios (`frontend`: 4200, `gateway`: 8080, `backend/bff`: 3001).
 - Presencia de `sessionStorage` en el frontend.
 - Rutas expuestas en el Gateway vs Backend.
-- Conteo de commits por repositorio.
-- Búsqueda de posibles credenciales o secretos en el código fuente.
+- Conteo y autores de commits por repositorio.
+- Verificación de `.gitignore` (ignorancia de `.env`, `node_modules/`, `dist/`).
 - Existencia de la carpeta `data/` y script `seed`.
 
 ### Paso 2: Verificar la Cadena de Peticiones en el Gateway
@@ -138,17 +195,17 @@ Comprobar el aislamiento y la resiliencia en la terminal:
 
 ---
 
-## 4. Guías de Referencia Detalladas
+## 5. Guías de Referencia Detalladas
 
 Para profundizar en áreas específicas del encargo, consultar los siguientes documentos de referencia adjuntos:
-- [Rúbrica Oficial Detallada (IE1 a IE10)](./references/rubrica_completa.md): Ponderaciones, criterios destacados y causas de nota mínima.
-- [Arquitectura de 4 Capas y Códigos HTTP](./references/arquitectura_4_capas.md): Responsabilidad de cada componente, CORS y matriz de códigos de error.
+- [Rúbrica Oficial Detallada (IE1 a IE10)](./references/rubrica_completa.md): Ponderaciones, criterios destacados, peso del 60% de la defensa y causas de nota mínima.
+- [Arquitectura de 4 Capas y Códigos HTTP](./references/arquitectura_4_capas.md): Responsabilidad de cada componente, CORS, flujo de petición de arriba a abajo y distinción Cloud vs Local.
 - [Configuración de Cognito y Seguridad](./references/cognito_y_seguridad.md): User Pool, Resource Server, grupos, scopes, App Clients, auto-registro y Lambda trigger.
-- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas literales de `Pulso.pdf` §12.2 + 10 preguntas frecuentes con argumentación técnica modelo.
+- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas literales de `Pulso.pdf` §12.2 + 10 preguntas complementarias + Guion oficial de D6 con preguntas parada por parada, señales de alarma y framework de 4 pasos.
 
 ---
 
-## 5. Regla Git para el Asistente
+## 6. Regla Git para el Asistente
 
 > [!CAUTION]
 > **RECORDATORIO DE REGLA DEL USUARIO:**

@@ -128,3 +128,46 @@ Según el documento oficial **`EP1-aclaraciones.pdf`**, el sistema VidalStore se
 ## Concepto Clave para Defensa: Defensa en Profundidad
 **Pregunta**: *¿Por qué el BFF o los microservicios vuelven a validar el token si el API Gateway ya lo hizo?*
 **Respuesta**: *Ninguna capa interior debe confiar ciegamente en que la capa anterior hizo su trabajo o en que la red interna es inviolable. Si un atacante o un contenedor comprometido envía una petición directamente a la IP/puerto interno del backend saltándose el gateway, el microservicio cortará la comunicación con un 401 si no hay token, evitando la fuga o manipulación de datos.*
+
+---
+
+## Flujo Paso a Paso de una Petición Autenticada (De Arriba a Abajo · D6 Slide 23)
+
+Por dónde viaja una petición autenticada en el sistema VidalStore:
+
+```text
+1. Amplify obtiene el token del User Pool de Cognito usando Authorization Code con PKCE.
+   ↓
+2. El Interceptor HTTP de Angular adjunta 'Authorization: Bearer <token>' a la llamada API.
+   ↓
+3. El API Gateway (NestJS :8080) verifica la firma contra el JWKS, vigencia, emisor y client_id.
+   ↓
+4. El API Gateway reenvía la petición con el encabezado Authorization intacto hacia el BFF.
+   ↓
+5. El JwtGuard del BFF vuelve a validar el token (Defensa en Profundidad) y deja el payload en 'req.user'.
+   ↓
+6. El RolesGuard del BFF compara 'cognito:groups' con el rol requerido por la ruta (@Roles).
+   ↓
+7. El BFF realiza llamadas concurrentes internas (Promise.all) hacia los microservicios.
+   ↓
+8. El Microservicio de persistencia consulta o filtra si el recurso pertenece al 'sub' del token.
+```
+
+---
+
+## Qué Está en la Nube y Qué en Local (D6 Slide 21)
+
+* **En la Nube (AWS Cloud)**:
+  - **Exclusivamente el User Pool de AWS Cognito**: Directorio de identidades, grupos (`jugadores`, `editores`, `administradores`), App Clients, dominio de Hosted UI y endpoint público de claves criptográficas JWKS.
+* **En la Máquina Local**:
+  - **Todo el resto del sistema**: Frontend Angular (`4200`), API Gateway NestJS (`8080`), BFF NestJS (`3000`/`3001`), y los Microservicios Node.js (`3002`, `3003`, `3004`, `3005`).
+* *Alerta de defensa*: No confundir el API Gateway local de NestJS con el servicio administrado AWS API Gateway.
+
+---
+
+## Principio de Extensibilidad: Si Mañana Entra un Quinto Microservicio (D6 Slide 21)
+
+Si el negocio incorpora un nuevo microservicio (ej: microservicio de recomendaciones o pagos):
+1. **Se toca el BFF**: Se añade la invocación interna hacia el nuevo microservicio y se orquesta la agregación con `Promise.all`.
+2. **Se toca el Gateway**: Si el nuevo servicio requiere exponer una ruta pública nueva bajo `/v1/`.
+3. **En Angular NO SE TOCA NINGUNA URL**: El frontend sigue comunicándose única y exclusivamente con `http://localhost:8080`. Jamás se añade la URL directa del nuevo microservicio en el cliente web.

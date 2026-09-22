@@ -57,13 +57,28 @@ Cada integrante del equipo defiende de forma individual sobre el código de los 
 
 ---
 
-## 3. Condiciones Administrativas de Entrega (Checklist Crítico)
+## 3. Condiciones Administrativas de Entrega (Checklist Crítico de la Clase D6)
 
 1. **Fecha Límite**: Lunes 21 de septiembre de 2026 a las 23:59 hrs (en AVA).
-2. **Formato en AVA**: Documento PDF con los enlaces a **todos** los repositorios privados y el hash del último commit de la rama `main` de cada uno.
-3. **Invitación a GitHub**: El docente (`Umbingelelo`) DEBE estar invitado y activo como colaborador en todos los repositorios. *Nota del profesor: "No olviden invitarme o tendrán la nota mínima".*
-4. **GitFlow y Rama `main`**:
-   - La rama `main` debe estar completamente al día al momento de la entrega, ya que es la que se clona para calificar.
-   - Las características deben trabajarse en ramas `feature/...` y mezclarse hacia `dev`, y `dev` hacia `main`.
-5. **Cantidad de Commits**: Rango esperado de **100 a 200 commits en total** sumando todos los repositorios.
-6. **Limpieza de Secretos**: No commitear `.env` reales, API keys, client secrets o contraseñas. El comando `git grep -iE "password|secret|token|cookie"` debe salir limpio.
+2. **Formato de Entrega en AVA**:
+   - Documento PDF que contiene los enlaces a **todos** los repositorios privados y el **hash del último commit de la rama `main`** de cada uno.
+   - *Regla de oro*: Lo que no se declara en la plantilla de entrega, no se califica.
+3. **Invitación a GitHub**: El docente (`Umbingelelo` / `cr.calderons`) DEBE estar invitado y activo como colaborador en **todos** los repositorios privados. Un repositorio al que el docente no pueda acceder cuenta como no entregado (nota mínima 1.0).
+4. **Commits Propios Obligatorios por Integrante (Evidencia de Autoría)**:
+   - Se exige que **todos los integrantes tengan commits propios y significativos**.
+   - El historial de Git es la evidencia legal de quién trabajó. Un grupo donde todos los commits son de una sola persona tiene un problema de admisibilidad previo a defender.
+   - Mensajes de commit con sentido: deben explicar qué cambió y por qué (ej: `Valida client_id en guard del BFF`; prohibido `cambios`, `asdf`, `arreglos`).
+5. **Estrategia de Ramas para Grupo Chico (2 a 3 personas)**:
+   - `main`: Siempre funciona. Es la rama que se clona para calificar y de donde sale el hash declarado.
+   - `dev`: Rama de integración previa.
+   - Ramas cortas de funcionalidad (`feat/guard-jwt`, duración 2 a 3 días).
+   - **Pull Request obligatorio**: El compañero revisa y comenta antes de mezclar a `dev`. Permite que todos conozcan el código ajeno para la defensa individual.
+   - Prohibido GitFlow sobrecargado con ramas de release innecesarias.
+6. **Distinción Crítica: Archivos Generados vs Secretos Comprometidos**:
+   - **Molesto (Generado)**: `node_modules/`, `dist/`, `.angular/`, `coverage/`, `*.log`, `.DS_Store`. Se resuelve agregando al `.gitignore`, ejecutando `git rm -r --cached` y haciendo commit.
+   - **Grave (Secretos)**: `.env`, `*.pem`, `*.jks`, `credentials.json`, `clientSecret` o contraseñas. Si se commitea un secreto, **queda comprometido para siempre** en el historial, clones y caché de GitHub. Borrar el archivo del repositorio NO alcanza: **la única solución real es rotar la credencial en AWS** donde se emitió.
+   - **SPA sin secreto de cliente**: El App Client de Angular jamás debe tener `client_secret`. `userPoolId` y `clientId` no son secretos y van en el frontend.
+7. **Limpieza y Verificación**:
+   - `git status` limpio en todos los repositorios.
+   - `git grep -iE "password|secret|token|cookie"` debe salir limpio de credenciales reales.
+   - Cantidad de commits esperada: entre **100 y 200 commits en total** sumando todos los repositorios.
