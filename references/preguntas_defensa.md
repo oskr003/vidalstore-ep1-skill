@@ -552,4 +552,115 @@ En este bloque de 2 minutos, el docente pide a cada integrante una modificación
   curl -i -X DELETE -H "Authorization: Bearer $TOKEN_ADMIN" http://localhost:8080/v1/licencias/xyz-123
   ```
 
+---
+
+## Bloque E: Preguntas Oficiales de Mensajería, Docker y RabbitMQ (D7, L6 y L6A)
+
+Este bloque cubre las preguntas técnicas de los **Puntos de Control de Pulso L6**, las clases magistrales **D7 ("Docker de verdad y por qué una cola")** y **L6A ("Clase pre-laboratorio y notas de orador")**, evaluadas en la defensa individual.
+
+---
+
+### E.1. ¿Por qué el `-v` solo no alcanzó, y qué agregó el `--hostname` al contenedor de RabbitMQ?
+* **Fuente**: *Pulso L6 Punto de control 1 (Página 18) y D7 Slide 11*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Ejecutamos el contenedor con `--hostname rabbit1 -v datos-rabbit:/var/lib/rabbitmq`.
+  2. **Qué problema resuelve**: Garantiza la persistencia real de colas y usuarios al recrear el contenedor. RabbitMQ almacena su base de datos interna Mnesia en un directorio nombrado según el nodo Erlang: `/var/lib/rabbitmq/mnesia/rabbit@<hostname>`.
+  3. **Qué descarté**: Descarté correr `docker run` sin `--hostname`. Si se omite, Docker asigna el Container ID aleatorio como hostname. Al destruir y recrear el contenedor, nace un nodo Erlang nuevo (`rabbit@nuevo_id`) con la base vacía, ignorando el directorio anterior aunque el volumen esté montado.
+  4. **Cómo lo compruebo**: Ejecutando `docker exec rabbit1 rabbitmqctl eval "node()."`, el cual responde invariablemente `rabbit@rabbit1`, y comprobando con `list_queues` que la cola sobrevive tras `docker rm -f rabbit1` y recrear.
+
+---
+
+### E.2. ¿Por qué la columna de fecha en PostgreSQL es `timestamptz` y no `timestamp`?
+* **Fuente**: *Pulso L6 Punto de control 2 (Página 30) y L6 Tramo 2.6*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Definimos la columna de auditoría como `recibido_en timestamptz NOT NULL DEFAULT now()`.
+  2. **Qué problema resuelve**: Elimina la ambigüedad temporal en arquitecturas distribuidas. `timestamptz` (`timestamp with time zone`) convierte y almacena el instante temporal en UTC normalizado en el motor de base de datos, y lo proyecta a la zona horaria del cliente al consultar.
+  3. **Qué descarté**: Descarté `timestamp` sin zona horaria. Si los microservicios corren en servidores en Virginia (UTC-4) o contenedores en UTC y el cliente consulta desde Santiago (UTC-3 o UTC-4 según horario de verano), un `timestamp` plano almacena números descontextualizados, haciendo imposible ordenar cronológicamente eventos concurrentes.
+  4. **Cómo lo compruebo**: Ejecutando `\d mensajes_taller` en `psql` para constatar el tipo `timestamp with time zone`.
+
+---
+
+### E.3. ¿Qué pasaría si cambiaras `noAck: false` por `noAck: true` y tu worker se cayera justo después de recibir un mensaje?
+* **Fuente**: *Pulso L6 Punto de control 3 (Página 43) y L6A Slide 4*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Configuramos el consumidor con `{ noAck: false }` y ejecutamos `canal.ack(mensaje)` explícito únicamente tras procesar el mensaje con éxito.
+  2. **Qué problema resuelve**: Previene la pérdida definitiva de mensajes ante fallas del worker. Con `noAck: false`, el mensaje queda en estado `Unacked` en RabbitMQ; si el proceso se cae o pierde la conexión TCP sin enviar el ack, RabbitMQ lo reencola automáticamente para que otro consumidor lo procese.
+  3. **Qué descarté**: Descarté `noAck: true` (auto-ack). Con auto-ack, RabbitMQ considera entregado el mensaje y lo elimina de la cola en el microsegundo exacto en que sale por el socket de red hacia el worker. Si el proceso muere antes de escribir en disco o base de datos, el mensaje se destruye para siempre sin aviso ni reintento.
+  4. **Cómo lo compruebo**: Mostrando en el código del consumidor la llamada `this.canal.ack(mensaje)` dentro del bloque `try/catch`.
+
+---
+
+### E.4. ¿Por qué el evento se publica después de que el microservicio guarda el registro, y no antes? ¿Por qué no publica el BFF?
+* **Fuente**: *Pulso L6 Punto de control 4 (Página 56) y L6A Slides 6–7*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En el microservicio, el orden estricto dentro del endpoint es: 1. Verificar token y extraer `sub` -> 2. Persistir en base de datos -> 3. Publicar evento en el exchange -> 4. Responder `201 Created`. El BFF solo reenvía la cabecera `Authorization` y jamás publica.
+  2. **Qué problema resuelve**: Garantiza la veracidad del sistema. Un evento afirma un hecho consumado que ya ocurrió en el pasado (`compra.realizada`, `prestamo.creado`). Si publicáramos antes de guardar y la base de datos fallara (por constraints, desconexión o disco lleno), se habría anunciado un evento falso al broker: otros microservicios habrían mandado correos o descontado saldo por una operación inexistente, sin posibilidad de "desavisar".
+  3. **Qué descarté**: Descarté publicar desde el BFF. El BFF no es dueño de la transacción ni de la persistencia. Si el microservicio guardara y el BFF publicara, cualquier caída de red entre ambos dejaría una compra realizada sin que ningún evento sea emitido jamás.
+  4. **Cómo lo compruebo**: Mostrando que si el worker está apagado, el microservicio responde `201` de inmediato y el mensaje queda esperando en la cola de RabbitMQ (`list_queues`).
+
+---
+
+### E.5. ¿Por qué `libro.agotado` llegó a una sola cola, si se publicó en el mismo exchange que `prestamo.creado`?
+* **Fuente**: *Pulso L6 Punto de control 5 (Página 63) y L6A Slide 9*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Declaramos el exchange `biblioteca.eventos` (o `vidalstore.eventos`) de tipo `topic`, con bindings diferenciados: `prestamo.*` para notificaciones y `#` para auditoría.
+  2. **Qué problema resuelve**: Permite el desacoplamiento y la discriminación precisa de eventos según los intereses de cada consumidor.
+  3. **Qué descarté**: Descarté exchanges de tipo `fanout` (que copian todo a todas las colas sin filtrar) o `direct` (que no admiten comodines).
+  4. **Cómo lo compruebo**: En el exchange topic, el asterisco `*` exige **exactamente una palabra**: `prestamo.creado` calza con `prestamo.*` (llega a notificaciones) y calza con `#` (llega a auditoría), despertando a dos colas. En cambio, `libro.agotado` no empieza con `prestamo`, por lo que el exchange lo descarta para notificaciones y solo lo entrega a la cola de auditoría gracias a `#` (que acepta cero o más palabras).
+
+---
+
+### E.6. ¿Qué NO resuelve una cola de mensajería? Cita las tres limitaciones de D7 y explica por qué encolar no acelera
+* **Fuente**: *Clase magistral D7 Slide 13*.
+* **Respuesta Técnica Modelo**:
+  > "Una cola de mensajería es un buffer desacoplador, pero tiene tres limitaciones fundamentales:
+  > 1. **NO acelera el trabajo**: Mueve la espera fuera de la petición del usuario, pero el trabajo de fondo sigue tomando exactamente el mismo tiempo. Acelerar es responsabilidad de los **consumidores paralelos** (múltiples workers leyendo de la misma cola).
+  > 2. **NO sirve si necesitas la respuesta ahora**: Si la vista del frontend necesita saber inmediatamente el ID o el estado del nuevo recurso, encolar no ayuda porque el resultado aún no existe.
+  > 3. **NO arregla operaciones que fallan sin aviso**: Al contrario, el fallo ahora ocurre lejos de la vista del usuario. Si un envío de correo falla encolado, falla en silencio y nadie se entera a menos que se implementen Dead Letter Queues (DLQ) y monitoreo activo."
+
+---
+
+### E.7. La regla del botón COMPRAR: ¿Cómo decides si una operación va sincrónica o encolada?
+* **Fuente**: *Clase magistral D7 Slide 14*.
+* **Respuesta Técnica Modelo**:
+  > "Aplicamos el **criterio de necesidad de resultado**: *¿El usuario necesita el resultado de esta operación para poder seguir?*
+  > * **Va sincrónico (HTTP REST)**: Cuando el usuario requiere confirmación inmediata para continuar su flujo. Crear la licencia al pulsar 'COMPRAR' va sincrónico porque el jugador necesita saber que ya posee el juego y verlo en su biblioteca; la respuesta es un **`201 Created`** que certifica que el recurso ya existe.
+  > * **Va encolado (AMQP / RabbitMQ)**: Todo lo que no detiene el flujo del usuario. Mandar el correo con la boleta, actualizar estadísticas de popularidad del juego o notificar a los amigos son tareas en segundo plano que pueden tardar segundos o minutos sin degradar la experiencia de compra."
+
+---
+
+### E.8. ¿Por qué un contenedor queda en estado `Created` con 0 líneas en `docker logs` cuando hay conflicto de puerto?
+* **Fuente**: *Clase magistral D7 Slides 8–9*.
+* **Respuesta Técnica Modelo**:
+  > "Ocurre cuando Docker no puede enlazar el puerto solicitado del anfitrión (ej. `Bind for 0.0.0.0:5672 failed: port is already allocated`) porque otro contenedor o proceso del sistema ya lo está ocupando.
+  > Docker crea la capa del contenedor (por eso aparece en `docker ps -a` como `Created`), pero aborta antes de invocar el proceso principal.
+  > Como el proceso interno jamás llegó a ejecutarse, nunca escribió nada en `stdout` ni `stderr`. Por lo tanto, `docker logs` devuelve **cero líneas**. La causa del error no está en el log del contenedor, sino en la salida del comando `docker run` en la terminal (código de salida 125)."
+
+---
+
+### E.9. ¿Por qué en RabbitMQ el productor nunca publica directamente a una cola?
+* **Fuente**: *Clase magistral D7 Slide 16*.
+* **Respuesta Técnica Modelo**:
+  > "Porque en la arquitectura AMQP existe un desacoplamiento estricto entre productores y consumidores:
+  > El productor publica únicamente a un **Exchange** acompañando el payload de una **Routing Key** (etiqueta que describe qué hecho ocurrió).
+  > El productor no sabe, no le interesa y no debe saber cuántas colas existen ni quiénes las leen. El enrutamiento hacia una, varias o ninguna cola lo decide exclusivamente el Exchange en base a las reglas de **Binding** declaradas por los consumidores. Si mañana agregamos un nuevo consumidor de analítica o multas, se crea una cola y un binding sin tocar ni redesplegar una sola línea del productor."
+
+---
+
+### E.10. En la topología de la EP2, ¿qué elementos son estrictamente fijos y qué decide el grupo?
+* **Fuente**: *L6A Slides 11–13*.
+* **Respuesta Técnica Modelo**:
+  > "* **Estrictamente Fijo por Normativa**:
+  >   1. Los 3 exchanges y sus tipos: `vidalstore.eventos` (`topic`), `vidalstore.comandos` (`direct`) y `vidalstore.dlx` (`direct`).
+  >   2. Las 4 routing keys: `compra.realizada`, `licencia.revocada`, `juego.publicado` y `correo.enviar`.
+  >   3. El binding de auditoría con `#` (cero o más palabras).
+  >   4. El binding de correos con `correo.enviar`.
+  >   5. La existencia de una DLQ por cada cola de trabajo (total 6 colas).
+  > * **Decisiones Autónomas del Grupo (a justificar en la defensa)**:
+  >   1. Los nombres de las seis colas (ej: `cola-avisos`, `cola-auditoria`, `cola-correos`, etc.).
+  >   2. El patrón de binding exacto de la cola de avisos (ej: `compra.*`).
+  >   3. El prefetch de los consumidores (Semana 9).
+  >   4. Los valores de las políticas de TTL y longitud en RabbitMQ (Semana 10)."
+
+
 
