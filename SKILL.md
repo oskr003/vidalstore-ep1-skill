@@ -154,6 +154,11 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
       - Tabla `licencias`: `id serial PK`, `juego_id int`, `usuario_sub text`, `estado text CHECK (estado IN ('activa', 'revocada'))`, `adquirida_en timestamptz`, `revocada_en timestamptz`, `revocada_por text`.
       - **Índice parcial obligatorio**: `UNIQUE (usuario_sub, juego_id) WHERE estado = 'activa'` (permite volver a comprar si fue revocada; regla de Arturo en base de datos).
       - Cero Foreign Keys entre servicios. Manejo de conexión con `pool.on('error', ...)` para evitar que reinicios de Postgres boten el proceso de Node.
+30. **Metodología Obligatoria: Plan de Implementación y Walkthrough Técnico**:
+    - **Antes de codear**: Toda feature o rama de trabajo debe contar obligatoriamente con un **Plan de Implementación Formal** presentado como artefacto interactivo (`RequestFeedback: true`). Debe declarar: contexto de rúbrica (indicadores y %), diagrama Mermaid, fases atómicas paso a paso, contratos e interfaces TypeScript, política estricta de resiliencia y códigos HTTP (400, 404, 503, nunca 500 ciego), estrategia de pruebas en Vitest y propuesta de commits atómicos.
+    - **Durante el trabajo**: Ejecución estrictamente atómica, validando tests en cada etapa y respetando la prohibición de tocar Git sin autorización explícita previa.
+    - **Al terminar**: Generación obligatoria de un **Walkthrough de Cierre** que certifique la salida completa de los tests, evidencie el manejo de fallos y proporcione el guión técnico con preguntas y respuestas para la defensa individual de 15 minutos ante el profesor.
+    - Plantillas y especificación completa en [references/metodologia_plan_y_walkthrough.md](./references/metodologia_plan_y_walkthrough.md).
 
 ---
 
@@ -303,6 +308,7 @@ Para profundizar en áreas específicas del encargo, consultar los siguientes do
 - [Arquitectura de 4 Capas y Códigos HTTP](./references/arquitectura_4_capas.md): Responsabilidad de cada componente, CORS, flujo de petición de arriba a abajo y distinción Cloud vs Local.
 - [Configuración de Cognito y Seguridad](./references/cognito_y_seguridad.md): User Pool, Resource Server, grupos, scopes, App Clients, auto-registro y Lambda trigger.
 - [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas de `Pulso.pdf` §12.2 + 10 preguntas de D7/L6/L6A + Guion oficial de D6 + 15 preguntas oficiales de D8, L7A y L7 (Bloque F).
+- [Metodología de Plan de Implementación y Walkthrough](./references/metodologia_plan_y_walkthrough.md): Plantillas estándar obligatorias para la planificación interactiva previa y el informe de walkthrough posterior con evidencias de pruebas y guión de defensa.
 
 ---
 

@@ -491,5 +491,13 @@ flowchart TD
 | **F.14** | *¿Por qué CartasMuertasConsumidor hace nack(false, true) con timeout de 5s ante caída de BD?* | La DLQ es la última parada. Si la base no responde, se reencola tras 5s para no perder la última copia del mensaje muerto. |
 | **F.15** | *¿Qué información aporta el header x-death?* | Caja negra forense: `queue` de origen, `reason` de muerte (`rejected`, `expired`, `maxlen`), `count` de defunciones y `routing-keys` original. |
 
+---
 
+## 14. Metodología de Trabajo: Plan de Implementación y Walkthrough
 
+Todo cambio o desarrollo en cualquier microservicio o rama (`feature/*`) sigue este ciclo innegociable:
+1. **Plan de Implementación Formal**: Documento interactivo (`RequestFeedback: true`) antes de codear, declarando objetivos, indicadores de rúbrica, interfaces TypeScript, estrategia de errores HTTP (503/404) y casos de prueba.
+2. **Desarrollo y Pruebas Unitarias**: Construcción modular aislada con mocks de red en Vitest.
+3. **Commits Atómicos en Git**: En español, modo imperativo, prefijos semánticos en minúsculas y autorización explícita previa para cada comando de Git.
+4. **Walkthrough de Cierre**: Informe de verificación con logs de tests, validación de la rúbrica y guión técnico de defensa.
+* Plantillas disponibles en: [`references/metodologia_plan_y_walkthrough.md`](./references/metodologia_plan_y_walkthrough.md).
