@@ -76,16 +76,17 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - Si el usuario consulta su propia biblioteca/préstamos y está vacía, debe retornar **`200 OK` con `[]`**, jamás 403 ni 404.
 13. **CORS Estricto**:
     - Únicamente en el Gateway (`app.enableCors({ origin: 'http://localhost:4200' })`). Prohibido `origin: *`.
-14. **Higiene de Repositorios y Git en EP2**:
+14. **Higiene de Repositorios, Git y Documentación en EP2**:
     - **Mensajes de Commit Obligatorios con Prefijo Semántico y Español Imperativo**: Todos los commits deben llevar obligatoriamente un prefijo semántico en minúsculas (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`), y el mensaje debe redactarse estrictamente en **español** y en **modo imperativo** (ej: `feat: Configurar arranque...`, `fix: Sincronizar topología...`, `test: Adaptar pruebas...`, `docs: Actualizar documentación...`). Prohibido el inglés y prohibidos los mensajes vagos o en pasado/presente indicativo (`arreglos`, `se agregó`, `cambios`, `fixed`).
     - **Commits Estrictamente Atómicos**: Cada commit debe ser indivisible y representar una sola responsabilidad clara. Queda prohibido agrupar múltiples fases (scaffolding, dependencias, lógica y pruebas) en un commit monolítico.
-    - **Ramas de Trabajo EP2**:
+    - **Nomenclatura de Ramas en Español**: Las ramas feature deben nombrarse idealmente en español en minúsculas con guiones (ej. `feature/condicion-service-healthy`, `feature/reproceso-dlq`), manteniendo únicamente términos técnicos nativos en inglés (`healthy`, `cluster`, `setup`, `jwt`, `pipe`).
+    - **Ramas Feature Efímeras**: Las ramas feature son transitorias; una vez integradas y probadas en `dev`, deben eliminarse para mantener los repositorios limpios antes de la entrega final.
+    - **Higiene Estricta de Secretos**: Prohibido exponer o documentar contraseñas reales en READMEs o Markdown. Toda credencial sensible vive exclusivamente en el archivo local `.env` (ignorado en `.gitignore`). Los README deben usar únicamente marcadores de posición genéricos (`<usuario_bd>`, `<password_bd>`).
+    - **Documentación Técnica Neutral y Agnóstica (Cero Nombres Personales o 'Dueños')**: La documentación de arquitectura (`topologia.md`, `modelo-de-datos.md`, `repositorios.md`, READMEs) debe ser 100% profesional y centrarse en componentes de software y límites de contexto (Bounded Contexts). Prohibido incrustar nombres de alumnos o etiquetas de 'dueño de tal tabla/archivo'.
+    - **Respeto a la Autoría de Repositorios**: Cada integrante es evaluado por su propio historial de commits en su repositorio asignado (`vidalstore-plataforma` para infraestructura, `vidalstore-admin` para el microservicio administrador, `vidalstore-eventos` para el worker). No se deben crear ni commitear archivos en el repositorio de otro compañero para no restarle evidencias ni invadir su entrega.
+    - **Ramas Principales de Trabajo**:
       - `main`: Estable. Solo recibe merges desde `dev`.
-      - `dev`: Rama de integración grupal.
-      - Ramas feature específicas por responsable:
-        - David: `feature/infra-setup`, `feature/rabbit-cluster`, `feature/dlq-order`, `feature/retention-policies`.
-        - Iván: `feature/eventos-setup`, `feature/consumer-avisos`, `feature/consumer-auditoria`, `feature/consumer-dlq`.
-        - Oscar: `feature/admin-setup`, `feature/validation-pipe`, `feature/rabbit-admin-svc`, `feature/ep-dlq-reproceso`.
+      - `dev`: Rama de integración grupal continua.
 15. **Publica el que Escribe, y el Token Llega hasta Él (L6A Slide 6, Pulso L6 Tramo 4.1)**:
     - Un evento anuncia un hecho consumado que ya ocurrió en el pasado (`prestamo.creado`, `compra.realizada`, `licencia.revocada`).
     - El evento lo publica **estrictamente el microservicio que escribe en la persistencia**, y **únicamente después de haber guardado con éxito**. Si la persistencia falla (error de base de datos o validación), no se publica nada.
