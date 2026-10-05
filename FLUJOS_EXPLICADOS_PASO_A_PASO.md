@@ -18,7 +18,11 @@
 7. [Flujo 6 · Defensa en Profundidad y Acceso "Por Detrás" (Flujo D Oficial · 401 Unauthorized)](#7-flujo-6--defensa-en-profundidad-y-acceso-por-detrás-flujo-d-oficial--401-unauthorized)
 8. [Flujo 7 · Origen y Trazabilidad de Datos (Flujo E Oficial · Seed y API Externa)](#8-flujo-7--origen-y-trazabilidad-de-datos-flujo-e-oficial--seed-y-api-externa)
 9. [Flujo 8 · Auditoría y Registro de Trazabilidad Administrativa](#9-flujo-8--auditoría-y-registro-de-trazabilidad-administrativa)
-10. [Framework de Defensa Verbal en 4 Pasos (El Reloj de 15 Minutos)](#10-framework-de-defensa-verbal-en-4-pasos-el-reloj-de-15-minutos)
+10. [Flujo 9 · La Cadena Asincrónica Completa de Punta a Punta (L7 · Postgres y TypeORM)](#11-flujo-9--la-cadena-asincrónica-completa-de-punta-a-punta-l7)
+11. [Flujo 10 · El Mensaje Envenenado y la Salida de Emergencia DLQ (L7 · x-death y Cartas Muertas)](#12-flujo-10--el-mensaje-envenenado-y-la-salida-de-emergencia-dlq-l7)
+12. [Flujo 11 · Resiliencia ante Caída de Base de Datos y Reintentos (L7 · conReintentos)](#13-flujo-11--resiliencia-ante-caída-de-base-de-datos-y-reintentos-l7)
+13. [Flujo 12 · Idempotencia Real y Protección contra Duplicados 23505 (L7 · UNIQUE)](#14-flujo-12--idempotencia-real-y-protección-contra-duplicados-23505-l7)
+14. [Framework de Defensa Verbal en 4 Pasos (El Reloj de 15 Minutos)](#10-framework-de-defensa-verbal-en-4-pasos-el-reloj-de-15-minutos)
 
 ---
 
@@ -1008,4 +1012,144 @@ Este glosario reúne todos los conceptos teóricos, siglas, estándares y patron
 #### 20. In-Memory Storage (Almacenamiento en Memoria RAM)
 - ⚡ **Definición Técnica:** Mecanismo de persistencia utilizado en la Evaluación Parcial 1 donde las colecciones de datos (juegos, licencias, compras, auditoría) se gestionan mediante estructuras de datos en memoria (`Map<string, T>` o `Array<T>`) administradas por el servicio `MemoryStorageService`. Se inicializan a partir del archivo estático versionado `data/catalogo.json`. Cumple el requerimiento de permitir una ejecución 100% autónoma y reproducible en los computadores del laboratorio sin requerir la instalación ni configuración de motores de bases de datos externos (PostgreSQL/MongoDB).
 - 💡 **En Palabras Simples:** Es tener los datos anotados en una pizarra acrílica mientras dura la clase. Si reinicias el programa la pizarra se borra, pero el sistema tiene un libro maestro (`catalogo.json`) desde el cual vuelve a copiar toda la pizarra exactamente igual en un segundo.
+
+---
+
+## 11. Flujo 9 · La Cadena Asincrónica Completa de Punta a Punta (L7)
+
+> **Pregunta de Defensa:** _"Explica el recorrido completo de un evento desde que el usuario compra un juego en la pantalla hasta que queda registrado en PostgreSQL."_
+
+> ⚡ **Resumen Técnico:** El usuario pulsa "Comprar" en Angular (`:4200`). El Gateway (`:8080`) valida el JWT contra Cognito y lo reenvía al BFF (`:3000`). El BFF autoriza y llama a `POST /v1/compras` en el microservicio de licencias (`:3002`) propagando el token. El microservicio extrae `req.user.sub`, inserta la licencia en PostgreSQL en su esquema propio con el índice parcial `WHERE estado = 'activa'`, responde sincrónicamente `201 Created` al usuario, y acto seguido invoca a `publicador.mjs`. Este publica el evento `compra.realizada` al exchange topic `vidalstore.eventos` con headers persistentes (`x-evento-id`, `x-emitido-en`). RabbitMQ distribuye el mensaje a las colas `cola-avisos` (binding `compra.*`) y `cola-auditoria` (binding `#`). El worker (`vidalstore-eventos`), que corre con `prefetch(1)`, recibe el mensaje, valida los campos con `esDelMensaje`, persiste con TypeORM en `eventos_auditoria` (columna `payload jsonb`) y `notificaciones` (columna `estado CHECK`), y recién tras el insert exitoso envía `canal.ack(mensaje)` a RabbitMQ.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Usuario
+    participant Angular as Frontend (:4200)
+    participant Gateway as API Gateway (:8080)
+    participant BFF as BFF (:3000)
+    participant Licencias as MS Licencias (:3002)
+    participant Postgres as PostgreSQL (:5432)
+    participant Rabbit as RabbitMQ (:5672)
+    participant Worker as Worker Eventos (:3010)
+
+    Usuario->>Angular: Clic en "Comprar"
+    Angular->>Gateway: POST /v1/compras (Bearer JWT)
+    Gateway->>BFF: Forward HTTP (Bearer JWT)
+    BFF->>Licencias: Forward HTTP (Bearer JWT)
+    Licencias->>Licencias: Verifica token y extrae sub
+    Licencias->>Postgres: INSERT INTO licencias.licencias (usuario_sub, juego_id, estado='activa')
+    Postgres-->>Licencias: Licencia creada (id: 482)
+    Licencias-->>BFF: 201 Created { id: 482, juegoId: 10, estado: 'activa' }
+    BFF-->>Gateway: 201 Created
+    Gateway-->>Angular: 201 Created
+    Note over Angular,Usuario: Fin de la vía sincrónica (Usuario ya tiene el juego)
+
+    Licencias->>Rabbit: Publica compra.realizada a vidalstore.eventos (persistent: true)
+    Rabbit->>Rabbit: Enruta a cola-auditoria (#) y cola-avisos (compra.*)
+    Rabbit->>Worker: Entrega mensaje a AuditoriaConsumidor (prefetch: 1)
+    Worker->>Worker: JSON.parse y validación de cabeceras
+    Worker->>Postgres: INSERT INTO public.eventos_auditoria (payload jsonb, evento_id UNIQUE)
+    Postgres-->>Worker: Fila guardada
+    Worker->>Rabbit: canal.ack(mensaje)
+    Rabbit->>Rabbit: Mensaje borrado del broker
+```
+
+---
+
+## 12. Flujo 10 · El Mensaje Envenenado y la Salida de Emergencia DLQ (L7)
+
+> **Pregunta de Defensa:** _"¿Qué ocurre si se publica un mensaje que no es JSON o que tiene datos corruptos? Demuestra la ruta hacia la DLQ."_
+
+> ⚡ **Resumen Técnico:** Un productor publica un mensaje con el cuerpo `{ esto no es JSON valido`. RabbitMQ lo entrega al consumidor. El consumidor ejecuta `JSON.parse(mensaje.content.toString())` dentro de un bloque `try/catch`. La excepción `SyntaxError` es interceptada por la función `esDelMensaje(error)`, la cual determina que es un error intrínseco del dato que reintentar jamás va a solucionar. El consumidor ejecuta inmediatamente `canal.nack(mensaje, false, false)`: el primer `false` indica que solo se descarta este mensaje, y el segundo `false` indica `requeue: false` (NO reencolar). Al tener la cola el argumento `x-dead-letter-exchange: vidalstore.dlx` y `x-dead-letter-routing-key: cola-auditoria`, RabbitMQ aparta el mensaje de la cola de trabajo y lo publica en el DLX direct, el cual lo deposita en `cola-auditoria.dlq`. RabbitMQ le inyecta el encabezado forense `x-death` con motivo `reason: "rejected"` y la routing key original. `CartasMuertasConsumidor` extrae el mensaje de la DLQ, parsea `x-first-death-queue` y lo inserta en la tabla `mensajes_muertos` (columna `payload text`), confirmando con `canal.ack(mensaje)`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Productor as Herramienta / Productor
+    participant Rabbit as RabbitMQ (:5672)
+    participant Worker as Consumidor de Trabajo
+    participant DLX as Exchange vidalstore.dlx
+    participant DLQ as cola-auditoria.dlq
+    participant DeadLetters as CartasMuertasConsumidor
+    participant Postgres as PostgreSQL (:5432)
+
+    Productor->>Rabbit: Publica payload corrupto '{ esto no es JSON valido'
+    Rabbit->>Worker: Entrega mensaje (estado unacked)
+    Worker->>Worker: try { JSON.parse(...) } catch (error)
+    Note over Worker: SyntaxError detectado: esDelMensaje() = true
+    Worker->>Rabbit: canal.nack(mensaje, false, false) [requeue: false]
+    Rabbit->>DLX: Publica con routing key 'cola-auditoria' + cabecera x-death
+    DLX->>DLQ: Almacena mensaje muerto en cola-auditoria.dlq
+    Worker-->>Worker: La cola de trabajo principal sigue fluyendo sin bloqueos
+    
+    DLQ->>DeadLetters: Entrega mensaje muerto a CartasMuertasConsumidor
+    DeadLetters->>DeadLetters: Lee x-death[0] (reason, queue, routing-keys)
+    DeadLetters->>Postgres: INSERT INTO public.mensajes_muertos (payload text)
+    Postgres-->>DeadLetters: Fila registrada con éxito
+    DeadLetters->>Rabbit: canal.ack(mensaje)
+    Rabbit->>DLQ: Mensaje purgado de la DLQ
+```
+
+---
+
+## 13. Flujo 11 · Resiliencia ante Caída de Base de Datos y Reintentos (L7)
+
+> **Pregunta de Defensa:** _"¿Cómo distingue tu worker entre un error del mensaje y un fallo del entorno, y qué ocurre si PostgreSQL se detiene?"_
+
+> ⚡ **Resumen Técnico:** Cuando el consumidor recibe un evento válido pero la base de datos PostgreSQL está inaccesible (ej: contenedor detenido, `getaddrinfo ENOTFOUND postgres`), la función `conReintentos` evalúa `esDelMensaje(error)`. Al detectar que el error no es de sintaxis ni de restricción relacional, no descarta el mensaje inmediatamente: mantiene el mensaje en estado `unacked` en memoria y reintenta la operación hasta un máximo de 3 veces aplicando un retroceso progresivo (*progressive backoff* de 2 segundos en el intento 1 y 4 segundos en el intento 2). Durante estos reintentos, gracias a `prefetch(1)`, el consumidor retiene ese único mensaje y no asume más carga. Si la base de datos se recupera durante la ventana de reintento, el `insert` triunfa y se envía `canal.ack(mensaje)`. Si se agotan los 3 intentos sin éxito, el consumidor ejecuta `canal.nack(mensaje, false, false)` enviándolo a la DLQ, evitando que la cola quede congelada indefinidamente.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Rabbit as RabbitMQ (:5672)
+    participant Worker as AuditoriaConsumidor
+    participant Postgres as PostgreSQL (:5432)
+    participant DLQ as cola-auditoria.dlq
+
+    Rabbit->>Worker: Entrega mensaje válido (prefetch: 1)
+    Worker->>Postgres: Intento 1: INSERT INTO eventos_auditoria
+    Postgres--xWorker: ECONNREFUSED / ENOTFOUND (Base caída)
+    Note over Worker: conReintentos: espera 2000 ms (intento 1 fallido)
+    Worker->>Postgres: Intento 2: INSERT INTO eventos_auditoria
+    Postgres--xWorker: ECONNREFUSED (Base caída)
+    Note over Worker: conReintentos: espera 4000 ms (intento 2 fallido)
+    Worker->>Postgres: Intento 3: INSERT INTO eventos_auditoria
+    Postgres--xWorker: ECONNREFUSED (Base caída)
+    Note over Worker: Máximo de reintentos alcanzado (3 de 3)
+    Worker->>Rabbit: canal.nack(mensaje, false, false)
+    Rabbit->>DLQ: Desvía mensaje sano a la DLQ por fallo de infraestructura
+```
+
+---
+
+## 14. Flujo 12 · Idempotencia Real y Protección contra Duplicados 23505 (L7)
+
+> **Pregunta de Defensa:** _"Si un mensaje se procesa dos veces debido a una reentrega de RabbitMQ, ¿cómo garantizas que no se dupliquen registros?"_
+
+> ⚡ **Resumen Técnico:** La garantía de RabbitMQ es *at least once*. Si el consumidor guarda en PostgreSQL pero la red falla antes de enviar el `ack`, el mensaje vuelve a la cola y se reentrega con el mismo UUID en el header `x-evento-id`. Al intentar insertar por segunda vez, el motor de PostgreSQL detecta que el `evento_id` ya existe y rechaza el `INSERT` arrojando el código de error SQLSTATE `23505` (*unique_violation*). El bloque `catch` del consumidor inspecciona específicamente `error.code === '23505'`: no lanza excepción ni envía el mensaje a la DLQ; emite un log informativo (`reentrega del evento <uuid>: ya estaba guardado`) y ejecuta inmediatamente `canal.ack(mensaje)`. Así, la operación resulta completamente idempotente: procesar el evento una vez o diez veces deja la base de datos en el mismo estado exacto con `count(*) === 1`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Rabbit as RabbitMQ (:5672)
+    participant Worker as Consumidor de Eventos
+    participant Postgres as PostgreSQL (:5432)
+
+    Note over Rabbit,Worker: Entrega 1 (Normal)
+    Rabbit->>Worker: Entrega evento (UUID: 1111-2222-3333-4444)
+    Worker->>Postgres: INSERT INTO eventos_auditoria (evento_id='1111-...')
+    Postgres-->>Worker: Inserción exitosa (Fila 1 creada)
+    Note over Worker,Rabbit: Caída de red TCP antes del ack: RabbitMQ reencola
+    
+    Note over Rabbit,Worker: Entrega 2 (Reentrega por at least once)
+    Rabbit->>Worker: Reentrega el MISMO evento (UUID: 1111-2222-3333-4444)
+    Worker->>Postgres: INSERT INTO eventos_auditoria (evento_id='1111-...')
+    Postgres--xWorker: ERROR 23505 (duplicate key value violates unique constraint)
+    Worker->>Worker: catch: if (error.code === '23505')
+    Worker->>Worker: this.log.warn('reentrega: ya estaba guardado')
+    Worker->>Rabbit: canal.ack(mensaje) [Confirma sin tocar DLQ]
+    Rabbit->>Rabbit: Mensaje purgado definitivamente
+```
+
 

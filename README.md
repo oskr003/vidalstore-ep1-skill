@@ -421,4 +421,75 @@ La clase magistral D6 del profesor Cristian Calderón (`Umbingelelo`) define el 
 3. **Qué descarté**: Nombrar explícitamente la alternativa técnica rechazada (el paso que más pesa, demuestra decisión propia).
 4. **Cómo lo compruebo**: Demostrarlo en vivo en la pantalla (pestaña Red, dos tokens en curl, etc.).
 
+---
+
+## 12. Unidad 2 · Semana 9: Docker Compose, DLX/DLQ y Persistencia Relacional (D8, L7A y L7)
+
+A partir de la Semana 9, el sistema opera completamente en contenedores orquestados con Docker Compose y persistencia relacional con PostgreSQL.
+
+```mermaid
+flowchart TD
+    subgraph Compose["Orquestación Docker Compose (vidalstore-plataforma / compose.yml)"]
+        Frontend["vidalstore-frontend (:4200)"]
+        Gateway["vidalstore-gateway (:8080)"]
+        BFF["vidalstore-backend BFF (:3000)"]
+        MSProd["Microservicio Licencias (:3002)"]
+        Broker["RabbitMQ 4.3 (:5672 / :15672)\nhostname: rabbit1"]
+        Worker["vidalstore-eventos (:3010)\nPrefetch: 1"]
+        DB[(PostgreSQL 18 :5432\nVolume: datos-postgres)]
+    end
+
+    Frontend -->|HTTP| Gateway
+    Gateway -->|HTTP Forward| BFF
+    BFF -->|HTTP Forward| MSProd
+    
+    MSProd -->|1. Guarda licencia activa| DB
+    MSProd -->|2. Publica compra.realizada| Broker
+    
+    Broker -->|Topic vidalstore.eventos| Worker
+    Worker -->|TypeORM: eventos_auditoria, notificaciones| DB
+    Worker -->|ack explícito tras insert| Broker
+
+    Worker -.->|nack requeue: false si payload corrupto| DLX["vidalstore.dlx (Direct)"]
+    DLX --> DLQ["3 DLQ (.dlq)"]
+    DLQ --> DeadLetters["CartasMuertasConsumidor"]
+    DeadLetters -->|TypeORM: mensajes_muertos (payload text)| DB
+```
+
+### Conceptos Fundamentales de L7:
+1. **Docker Compose**: Un solo `compose.yml` levanta 8 contenedores. Se comunican por nombre de servicio (`rabbit1`, `postgres`, `bff`). Variables en `.env.example`. Indentación estricta de 2 espacios sin tabs.
+2. **Healthchecks Obligatorios**: `depends_on` con `condition: service_healthy` hacia Postgres (`pg_isready`) y RabbitMQ (`rabbitmq-diagnostics check_port_connectivity`) evita caídas por carrera al arrancar.
+3. **Las Tres Durabilidades**: Volumen nombrado de Docker + Cola durable (`durable: true`) + Mensaje persistente (`persistent: true`). Si falta una, los datos se pierden en el reinicio.
+4. **Prefetch(1)**: `await this.canal.prefetch(1)` en el worker evita sobrecargas y permite reintentos con backoff progresivo (2s, 4s).
+5. **Idempotencia Relacional**: La garantía es *at least once*. El `evento_id` lleva restricción `UNIQUE` en PostgreSQL. El código de colisión `23505` se confirma con `canal.ack(mensaje)` y no va a la DLQ.
+6. **DLX y 3 DLQs**: Argumentos `x-dead-letter-exchange` y `x-dead-letter-routing-key` en colas de trabajo. Declaración previa de las DLQ. Error `406 PRECONDITION_FAILED` se resuelve purgando colas huérfanas con `delete_queue`.
+7. **Inspección Forense `x-death`**: `reason: "rejected"`, `queue`, `count`, `routing-keys` y `x-first-death-queue` conservan la causa raíz y el evento original.
+8. **CartasMuertasConsumidor**: Un solo consumidor para las 3 DLQ. Persiste en `mensajes_muertos` con columna `payload text` (prohibido `jsonb`). Si Postgres falla, espera 5s y reencola con `canal.nack(mensaje, false, true)`.
+9. **Cuatro Tablas y Dos Dueños**:
+   - Worker (`vidalstore-eventos` en `public`): `eventos_auditoria` (payload `jsonb`), `notificaciones` (estado `CHECK`), `mensajes_muertos` (payload `text`).
+   - Microservicio Productor (en esquema propio): `licencias` con índice parcial `UNIQUE (usuario_sub, juego_id) WHERE estado = 'activa'`. Relación lógica sin Foreign Keys entre servicios.
+
+---
+
+## 13. Matriz de Preguntas de Defensa de la Semana 9 (D8, L7A y L7)
+
+| # | Pregunta Oficial de Defensa L7 | Concepto Clave a Responder |
+|---|---|---|
+| **F.1** | *¿Por qué `depends_on` solo no alcanza?* | `depends_on` solo espera que el contenedor pase a `running`, no que el motor acepte conexiones. Se requiere `healthcheck` y `condition: service_healthy`. |
+| **F.2** | *¿Qué pasa si el consumidor muere antes del ack?* | El mensaje permanece `unacked` en RabbitMQ; al cortarse la conexión TCP, el broker lo devuelve a la cola (`ready`) y lo entrega a otro worker (*at least once*). |
+| **F.3** | *¿Cuáles son las tres durabilidades?* | Volumen Docker (disco físico) + Cola durable (metadata en disco) + Mensaje persistent (payload en disco). Sin el mensaje persistente, la cola sobrevive pero vuelve vacía. |
+| **F.4** | *¿Cómo evitas duplicar registros?* | Con restricción `UNIQUE (evento_id)` en PostgreSQL. Un `if` previo tiene condición de carrera; un índice único en base de datos es atómico e infranqueable. |
+| **F.5** | *¿Qué haces ante el error 23505 y por qué no va a la DLQ?* | Se confirma con `canal.ack(mensaje)`. El mensaje ya se guardó en una entrega previa; mandarlo a la DLQ contaminaría el monitoreo con operaciones exitosas. |
+| **F.6** | *¿Por qué el payload de auditoría es jsonb y el de cartas muertas es text?* | Auditoría solo recibe JSON válido tras pasar el parse. Cartas muertas recibe justamente los mensajes corruptos; si fuera `jsonb`, el insert fallaría al registrar el error. |
+| **F.7** | *¿Por qué el estado es CHECK y no solo un type de TS?* | TypeScript solo valida en transpilación. La base de datos no sabe de TypeScript; el `CHECK` relacional garantiza que scripts directos o SQL no inserten estados inválidos. |
+| **F.8** | *¿Por qué CartasMuertasConsumidor usa un solo consumidor para las 3 DLQ?* | Principio DRY: el trabajo de registrar una defunción es el mismo. La cola de origen se extrae del header inmutable `x-first-death-queue`. |
+| **F.9** | *¿Por qué las DLQ se declaran antes que las colas de trabajo?* | El destino debe existir antes que el origen pueda mandar hacia él. Si una cola rechaza un mensaje y su DLQ no existe, RabbitMQ descarta el mensaje al vacío sin error. |
+| **F.10** | *¿Qué significa 406 PRECONDITION_FAILED y cómo se arregla?* | Las colas de L6 existían sin argumentos de DLX y son inmutables. Se eliminan con `rabbitmqctl delete_queue` y el worker las crea de nuevo. |
+| **F.11** | *¿Para qué sirve prefetch(1)?* | Limita a 1 mensaje sin confirmar por consumidor. Evita que el worker absorba la cola entera si la base de datos cae, pausando la cola ordenadamente. |
+| **F.12** | *¿Por qué el índice de licencias es parcial con WHERE estado = 'activa'?* | Permite comprar legítimamente un juego si la licencia previa fue revocada. Un UNIQUE plano bloquearía segundas compras de por vida. |
+| **F.13** | *¿Por qué al revocar licencia usuarioSub sale de la fila y no del token?* | El token es del administrador que revoca. El `usuarioSub` del evento debe ser el del jugador afectado para que la notificación llegue a la persona correcta. |
+| **F.14** | *¿Por qué CartasMuertasConsumidor hace nack(false, true) con timeout de 5s ante caída de BD?* | La DLQ es la última parada. Si la base no responde, se reencola tras 5s para no perder la última copia del mensaje muerto. |
+| **F.15** | *¿Qué información aporta el header x-death?* | Caja negra forense: `queue` de origen, `reason` de muerte (`rejected`, `expired`, `maxlen`), `count` de defunciones y `routing-keys` original. |
+
+
 

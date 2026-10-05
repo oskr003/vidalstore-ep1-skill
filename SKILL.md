@@ -1,13 +1,13 @@
 ---
 name: vidalstore-ep1
 description: >-
-  Auditoría, verificación estricta y preparación técnica integral para DSY1107 - Desarrollo Cloud Native I (DUOC UC), cubriendo la Evaluación Parcial N°1 (EP1 - Caso VidalStore) y la Unidad 2 / EP2 (Mensajería Asíncrona, RabbitMQ, Docker y Persistencia).
-  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers, workers y bases de datos, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10), las precisiones de "EP1-aclaraciones.pdf", las clases magistrales D6 ("Git en serio") y D7 ("Docker de verdad y por qué una cola"), los laboratorios L4/L6 y L6A, y las respuestas del profesor Umbingelelo en el foro.
+  Auditoría, verificación estricta y preparación técnica integral para DSY1107 - Desarrollo Cloud Native I (DUOC UC), cubriendo la Evaluación Parcial N°1 (EP1 - Caso VidalStore) y la Unidad 2 / EP2 (Mensajería Asíncrona, RabbitMQ, Docker Compose, DLQ y Persistencia Relacional con PostgreSQL).
+  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers, workers y bases de datos, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10 de EP1 e IE1 a IE19 de EP2), las precisiones de "EP1-aclaraciones.pdf", las clases magistrales D6 ("Git en serio"), D7 ("Docker de verdad y por qué una cola") y D8 ("Compose, ack, durabilidad y fallos"), los laboratorios L4, L6, L6A, L7A y L7 ("Exchanges, bindings y DLQ"), y las respuestas del profesor Umbingelelo en el foro.
 ---
 
 # VidalStore EP1 y Unidad 2 — Skill de Aseguramiento de Calidad y Cumplimiento al 100%
 
-Esta skill actúa como el estándar de control de calidad, auditoría técnica y preparación de defensa para la **Evaluación Parcial N°1 (Caso VidalStore)** y la **Unidad 2 / EP2 (Mensajería Asíncrona con RabbitMQ y Docker)** de la asignatura **DSY1107 - Desarrollo Cloud Native I**.
+Esta skill actúa como el estándar de control de calidad, auditoría técnica y preparación de defensa para la **Evaluación Parcial N°1 (Caso VidalStore)** y la **Unidad 2 / EP2 (Mensajería Asíncrona con RabbitMQ, Docker Compose y Persistencia)** de la asignatura **DSY1107 - Desarrollo Cloud Native I**.
 
 Integra las fuentes normativas obligatorias del encargo:
 1. **`EP1-aclaraciones.pdf`**: Documento oficial del profesor Cristian Calderón (`Umbingelelo`), el cual complementa el enunciado y rige sobre él.
@@ -19,6 +19,9 @@ Integra las fuentes normativas obligatorias del encargo:
 7. **`D7-Docker-de-verdad-y-por-que-una-cola.html`**: Clase magistral oficial de Semana 8 sobre contenedores Docker de verdad, receta de diagnóstico en 4 pasos, la trampa del estado `Created`, persistencia con volúmenes con nombre, el Erlang nodename (`--hostname rabbit1`), por qué una cola no acelera el trabajo, criterio sincrónico vs encolado (la regla del botón COMPRAR), y arquitectura de exchanges/bindings.
 8. **`L6.pdf`**: Guía oficial del Laboratorio L6 ("RabbitMQ y tu primer mensaje") con los 5 tramos (broker en contenedor, Postgres y `timestamptz`, worker `biblioteca-eventos`, productor `prestamos.mjs`, exchanges `topic` y `direct`), las 6 pruebas de aislamiento y las 5 respuestas oficiales de Pulso.
 9. **`L6A-L6-RabbitMQ-y-tu-primer-mensaje-con-notas.pdf`**: Clase pre-laboratorio oficial de Semana 8 con notas de orador, las 3 reglas innegociables de mensajería (publica el que escribe, el BFF reenvía pero no publica, ningún nombre suelto en topología), las 6 trampas que cuestan tiempo, la predicción de ruteo y el plan de arranque de la EP2.
+10. **`D8-Compose-ack-durabilidad-y-fallos.html`**: Clase magistral oficial de Semana 9 sobre Docker Compose (sintaxis YAML, variables y redes), confirmación con `ack`, estados del mensaje, las 3 durabilidades indispensables (volumen, cola durable y mensaje persistent), control de concurrencia con `prefetch`, idempotencia y ciclo de vida de fallos hacia DLQ.
+11. **`L7A-L7-Exchanges-bindings-y-DLQ-Clase-pre-laboratorio.html`**: Clase pre-laboratorio de Semana 9 con los 8 contenedores del sistema, orden estricto de topología con DLX/DLQ, error `406 PRECONDITION_FAILED` y su solución, discriminación forense de `x-death`, TypeORM en el worker y matriz de rutas de error.
+12. **`L7.pdf`**: Guía oficial completa de 90 páginas del Laboratorio L7 ("Exchanges, bindings y DLQ") con los 5 tramos (compose con el sistema entero, ack y prefetch, DLX y tres DLQ, TypeORM y 3 tablas en worker, cartas muertas en base y persistencia en microservicio productor con índice parcial), las 4 tablas en 2 esquemas, el puente a la EP2 y la rúbrica oficial completa de indicadores IE1 a IE19.
 
 > [!NOTE]
 > **Estado de las Evaluaciones:**
@@ -112,6 +115,45 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - `vidalstore-plataforma/docs/repositorios.md` congelado con una fila por componente del grupo.
     - Nombres fijos en topología: Exchanges `vidalstore.eventos` (`topic`), `vidalstore.comandos` (`direct`), `vidalstore.dlx` (`direct`). Routing keys: `compra.realizada`, `licencia.revocada`, `juego.publicado`, `correo.enviar`.
     - Del grupo: nombres de las seis colas (3 de trabajo + 3 DLQ), el patrón de la cola de avisos (`compra.*`), el prefetch (L7) y las políticas (L8).
+22. **Orquestación con Docker Compose (`compose.yml`) (D8 y L7 Tramo 1)**:
+    - Describe el sistema completo (8 servicios: frontend, gateway, bff, catálogo, licencias, worker/eventos, rabbit1, postgres).
+    - Sangría de 2 espacios estrictos, prohibido tabulaciones. Los guiones de listas se indentan a mayor profundidad.
+    - Red interna de Compose: los servicios se comunican usando su nombre de servicio (`rabbit1:5672`, `postgres:5432`, `bff:3000`). Dentro de un contenedor, `localhost` apunta a sí mismo, no al vecino.
+23. **Healthchecks y Condición `service_healthy` (D8 y L7 Tramo 1.6)**:
+    - `depends_on` por omisión solo espera que el contenedor pase a `running`, no que el servicio acepte conexiones.
+    - Obligatorio `healthcheck` en Postgres (`pg_isready -U biblioteca -d biblioteca`) y RabbitMQ (`rabbitmq-diagnostics -q check_port_connectivity`), y vincular con `condition: service_healthy`.
+    - Comando oficial de inicio: `docker compose up -d --build --wait`.
+24. **Las Tres Durabilidades Indispensables (D8 Slides 22–24 y L7 Tramo 2.1)**:
+    - Para sobrevivir al reinicio de RabbitMQ sin perder datos se necesitan **las tres**:
+      1. Volumen nombrado de Docker (`datos-rabbit:/var/lib/rabbitmq`).
+      2. Cola durable (`{ durable: true }`).
+      3. Mensaje persistent (`{ persistent: true }` en el productor).
+    - Si falta el volumen, se pierde todo al recrear. Si falta la cola, desaparece al reiniciar. Si falta el mensaje persistente, la cola sobrevive pero vuelve vacía.
+25. **Control de Concurrencia con `prefetch(1)` (L7A Slide 18 y L7 Tramo 2.4)**:
+    - Obligatorio `await this.canal.prefetch(1)` en `mensajeria.service.ts` inmediatamente tras instanciar el canal.
+    - Limita la retención a un solo mensaje sin confirmar por consumidor. Evita que un worker absorba la cola entera de golpe si la base de datos se cae, permitiendo pausar la cola ordenadamente mientras se reintenta.
+26. **Dead Letter Exchange (`vidalstore.dlx`) y las Tres DLQ (L7 Tramo 3)**:
+    - Cada cola de trabajo declara: `deadLetterExchange: 'vidalstore.dlx'` y `deadLetterRoutingKey: '<nombre_cola>'`.
+    - **Orden estricto de declaración**: Las tres DLQ y sus bindings deben crearse ANTES que las colas de trabajo para evitar pérdidas silenciosas de descartes.
+    - **Solución a `406 PRECONDITION_FAILED`**: Si una cola previa existía sin DLX, RabbitMQ no permite alterar sus argumentos; se eliminan con `rabbitmqctl delete_queue <nombre>` y se reinicia el worker.
+27. **Matriz de Decisión de Errores y Reintentos (L7 Tramo 4.8)**:
+    - **Error de mensaje** (JSON inválido, `SyntaxError`, SQLSTATE `22...` / `23...` de dato corrupto): `canal.nack(mensaje, false, false)` directo a la DLQ. Reintentar no sirve.
+    - **Duplicado SQLSTATE `23505`** (`unique_violation` en `evento_id`): `canal.ack(mensaje)` y log de advertencia. El mensaje ya se persistió en una entrega anterior; NO va a la DLQ.
+    - **Error de entorno / infraestructura** (Postgres caído, timeout, `ECONNREFUSED`): `conReintentos` hasta 3 veces con retroceso progresivo (2s, 4s); si se agotan, `canal.nack(mensaje, false, false)` hacia la DLQ.
+28. **Consumidor de Cartas Muertas (`CartasMuertasConsumidor`) (L7 Tramo 5.1)**:
+    - Un solo consumidor itera sobre `Object.values(DLQ)` consumiendo las 3 DLQs.
+    - Extrae la cola de origen desde `x-first-death-queue` y el motivo desde `x-death[0].reason`.
+    - Persiste en la tabla `mensajes_muertos` (la columna `payload` es **`text` obligatoria, JAMÁS `jsonb`**, para poder recibir JSON roto).
+    - Recién tras el insert exitoso envía `canal.ack(mensaje)`. Si la base de datos falla al guardar la carta muerta, espera 5s y reencola con `canal.nack(mensaje, false, true)` para no perder el mensaje.
+29. **Persistencia Relacional con TypeORM y PostgreSQL (4 Tablas y 2 Dueños) (L7 Tramos 4 y 5)**:
+    - **Dueño 1 (`vidalstore-eventos` en esquema `public`)**:
+      - `eventos_auditoria`: `id uuid PK`, `routing_key text`, `evento_id uuid UNIQUE` (idempotencia), `usuario_sub text nullable`, `payload jsonb`, `emitido_en timestamptz`, `recibido_en timestamptz`.
+      - `notificaciones`: `id uuid PK`, `para text`, `asunto text`, `estado text CHECK (estado IN ('enviada', 'fallida'))`, `evento_id uuid`, `enviada_en timestamptz`.
+      - `mensajes_muertos`: `id uuid PK`, `cola_origen text`, `routing_key text`, `motivo text`, `intentos int CHECK (intentos >= 1)`, `payload text`, `recibido_en timestamptz`.
+    - **Dueño 2 (Microservicio Productor de Licencias en esquema propio `licencias`)**:
+      - Tabla `licencias`: `id serial PK`, `juego_id int`, `usuario_sub text`, `estado text CHECK (estado IN ('activa', 'revocada'))`, `adquirida_en timestamptz`, `revocada_en timestamptz`, `revocada_por text`.
+      - **Índice parcial obligatorio**: `UNIQUE (usuario_sub, juego_id) WHERE estado = 'activa'` (permite volver a comprar si fue revocada; regla de Arturo en base de datos).
+      - Cero Foreign Keys entre servicios. Manejo de conexión con `pool.on('error', ...)` para evitar que reinicios de Postgres boten el proceso de Node.
 
 ---
 
@@ -234,16 +276,33 @@ Descartar causas comunes de error antes de modificar código:
 5. **Token expirado**: `POST` da `401 Unauthorized` con código correcto -> El token duró 1 hora; renovar sesión en Cognito Hosted UI.
 6. **Alias en PowerShell**: `curl` rechaza `-i` o `-X` en Windows -> Invocar como `curl.exe`.
 
+### Paso 7: Los 5 Puntos de Control y Entregables de L7 (Compose, DLQ y Persistencia)
+Comprobar los 5 hitos fundamentales de la Semana 9:
+1. **Control 1 (Compose y Healthchecks)**: `docker compose ps` muestra todos los contenedores en estado `Up (healthy)`; la condición `service_healthy` garantiza que ningún servicio se caiga por carrera al arrancar.
+2. **Control 2 (Ack, Durabilidad y Prefetch)**: `consumidor-lento.mjs` demuestra que sin `ack` el mensaje queda en `Unacked` y vuelve a la cola tras `Ctrl+C`; con `prefetch(1)` el worker retiene solo 1 mensaje protegiéndose de saturación.
+3. **Control 3 (Topología DLX, 3 DLQs y Mensaje Envenenado)**: Topología declarada con DLQs antes de las colas de trabajo; `emitir.mjs 1 --roto` (`{ esto no es JSON valido`) desvía a `auditoria.dlq` y `notificaciones.dlq`; `ver-dlq.mjs` lee `x-death` con motivo `rejected` y routing key original sin alterar la cola.
+4. **Control 4 (TypeORM, Restricciones y Reintentos)**: Tablas con `NOT NULL`, `CHECK (estado IN ('enviada', 'fallida'))` y `UNIQUE (evento_id)`; detención de base (`docker compose stop postgres`) provoca 2 reintentos WARN y 1 ERROR antes de desviar a DLQ; reentrega con `--repetido` confirma con `canal.ack(mensaje)` registrando `count(*) === 1`.
+5. **Control 5 (Cadena Completa y Cartas Muertas)**: `CartasMuertasConsumidor` registra mensajes rotos en tabla `mensajes_muertos` (columna `payload text`); creación de compra desde frontend o API guarda en esquema propio con índice parcial y publica evento que impacta `eventos_auditoria` consultable con `payload ->> 'juegoId'`.
+
+### Paso 8: Verificación de Errores Frecuentes de L7 (D8 y L7 Tramo 5.6)
+1. **`no configuration file provided`**: El comando Compose se ejecutó fuera de la raíz de la plataforma -> Situarse en `vidalstore-plataforma`.
+2. **`ECONNREFUSED 127.0.0.1` en contenedor**: El servicio intenta conectar por `localhost` -> Usar nombre de servicio (`rabbit1`, `postgres`, `bff`).
+3. **`getaddrinfo ENOTFOUND postgres`**: Contenedor de base detenido -> Levantar Postgres con `docker compose up -d postgres` (activa reintentos).
+4. **`406 PRECONDITION_FAILED` en worker**: Colas previas existían sin argumentos de DLX -> Ejecutar `rabbitmqctl delete_queue <nombre>` y reiniciar worker.
+5. **`password authentication failed`**: La contraseña del `.env` no coincide con el volumen inicializado -> Usar la clave original o reiniciar con `down -v`.
+6. **`canal: JSON.parse` cierra el canal**: Consumidor sin `try/catch` intentó parsear dato corrupto -> Envolver en `try/catch` y rechazar con `nack(false, false)`.
+
 ---
 
 ## 5. Guías de Referencia Detalladas
 
 Para profundizar en áreas específicas del encargo, consultar los siguientes documentos de referencia adjuntos:
-- [Guía Técnica de Mensajería, Docker y RabbitMQ](./references/mensajeria_docker_rabbitmq_l6.md): Dos vías del sistema, topología AMQP, Docker de verdad, `ack` explícito, `timestamptz` y transición a EP2.
-- [Rúbrica Oficial Detallada (IE1 a IE10)](./references/rubrica_completa.md): Ponderaciones, criterios destacados, peso del 60% de la defensa y causas de nota mínima.
+- [Guía Técnica de Compose, DLQ y Persistencia (D8, L7A y L7)](./references/mensajeria_compose_dlq_persistencia_l7.md): Orquestación multi-contenedor, durabilidades, prefetch(1), topología con DLX/DLQ, idempotencia con UNIQUE, TypeORM, CartasMuertasConsumidor y mapeo Biblioteca vs VidalStore.
+- [Guía Técnica de Mensajería, Docker y RabbitMQ (D7, L6 y L6A)](./references/mensajeria_docker_rabbitmq_l6.md): Dos vías del sistema, topología AMQP, Docker de verdad, `ack` explícito, `timestamptz` y transición a EP2.
+- [Rúbrica Oficial Detallada (IE1 a IE19)](./references/rubrica_completa.md): Ponderaciones de EP1 (40%) y EP2 (40% encargo grupal IE1 a IE8 + 60% defensa individual IE9 a IE19).
 - [Arquitectura de 4 Capas y Códigos HTTP](./references/arquitectura_4_capas.md): Responsabilidad de cada componente, CORS, flujo de petición de arriba a abajo y distinción Cloud vs Local.
 - [Configuración de Cognito y Seguridad](./references/cognito_y_seguridad.md): User Pool, Resource Server, grupos, scopes, App Clients, auto-registro y Lambda trigger.
-- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas de `Pulso.pdf` §12.2 + 10 preguntas de D7/L6/L6A + Guion oficial de D6 con preguntas parada por parada, señales de alarma y framework de 4 pasos.
+- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas de `Pulso.pdf` §12.2 + 10 preguntas de D7/L6/L6A + Guion oficial de D6 + 15 preguntas oficiales de D8, L7A y L7 (Bloque F).
 
 ---
 
@@ -253,3 +312,4 @@ Para profundizar en áreas específicas del encargo, consultar los siguientes do
 > **RECORDATORIO DE REGLA DEL USUARIO:**
 > **NO USAR NINGÚN COMANDO DE GIT SIN AUTORIZACIÓN EXPRESA DEL USUARIO.**
 > Siempre explicar qué hace el comando y por qué se necesita antes de solicitar su ejecución.
+

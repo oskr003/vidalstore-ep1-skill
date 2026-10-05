@@ -662,5 +662,172 @@ Este bloque cubre las preguntas técnicas de los **Puntos de Control de Pulso L6
   >   3. El prefetch de los consumidores (Semana 9).
   >   4. Los valores de las políticas de TTL y longitud en RabbitMQ (Semana 10)."
 
+---
+
+## Bloque F: Preguntas Oficiales de Compose, Ack, DLQ, Idempotencia y Persistencia (D8, L7A y L7)
+
+Este bloque consolida las preguntas de defensa individual de la **Semana 9**, extraídas directamente de los cinco Puntos de Control de L7, la clase D8 ("Compose, ack, durabilidad y fallos") y el pre-laboratorio L7A.
+
+---
+
+### F.1. ¿Por qué `depends_on` solo no alcanza y hace falta un `healthcheck` con `condition: service_healthy`?
+* **Fuente**: *D8 Slides 15–18, L7A Slide 12 y L7 Tramo 1.6*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En `compose.yml`, configuramos healthchecks con `pg_isready -U biblioteca -d biblioteca` en Postgres y `rabbitmq-diagnostics -q check_port_connectivity` en RabbitMQ, y atamos los servicios dependientes con `depends_on: { <servicio>: { condition: service_healthy } }`.
+  2. **Qué problema resuelve**: Previene caídas por carrera al arrancar. `depends_on` básico solo ordena el inicio de los contenedores; apenas el contenedor de RabbitMQ pasa a `running`, Compose asume cumplida la dependencia. Sin embargo, el motor Erlang tarda de 5 a 10 segundos en abrir sus sockets. Sin la condición de salud, el worker o la API arrancan, intentan conectarse de inmediato, reciben `ECONNREFUSED` y mueren.
+  3. **Qué descarté**: Descarté poner retrasos artificiales con `sleep` o suponer que el contenedor está listo solo porque encendió.
+  4. **Cómo lo compruebo**: Mostrando en `compose.yml` el bloque `healthcheck` y verificando con `docker compose ps` que los servicios pasan por el estado `(health: starting)` hasta alcanzar `(healthy)` antes de que el worker inicie.
+
+---
+
+### F.2. ¿Qué le pasa a un mensaje si el consumidor muere antes de enviar el `ack`?
+* **Fuente**: *D8 Slide 20 y L7A Slide 17*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Configuramos todos los consumidores con confirmación manual explícita (`noAck: false`) y ubicamos `canal.ack(mensaje)` estrictamente después de haber persistido el registro en PostgreSQL.
+  2. **Qué problema resuelve**: Garantiza la tolerancia a fallos bajo el modelo *at least once*. Mientras el consumidor procesa el mensaje, este reside en RabbitMQ en estado `unacked`. Si el proceso muere, el contenedor se apaga o la conexión TCP se interrumpe antes del `ack`, RabbitMQ detecta el cierre del canal y devuelve automáticamente el mensaje a la cola (estado `ready`), reentregándolo al siguiente consumidor disponible.
+  3. **Qué descarté**: Descarté auto-ack (`noAck: true`) o ejecutar `ack` antes de guardar en la base de datos (`await insert`). Si confirmáramos antes y el proceso muriera durante la persistencia, el broker ya habría borrado el mensaje y los datos se evaporarían.
+  4. **Cómo lo compruebo**: Deteniendo el consumidor con `Ctrl+C` durante el experimento de `consumidor-lento.mjs` y verificando con `rabbitmqctl list_queues` que la cola vuelve inmediatamente de `5 4 1` a `5 5 0`.
+
+---
+
+### F.3. ¿Cuáles son las tres durabilidades y qué se pierde si falta cada una?
+* **Fuente**: *D8 Slides 22–24 y L7 Tramo 2.1*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Configuramos las tres capas de durabilidad: 1. Volumen con nombre de Docker (`datos-rabbit:/var/lib/rabbitmq`) en `compose.yml`; 2. Colas durables (`{ durable: true }`) en `topologia.ts`; 3. Mensajes persistentes (`{ persistent: true }`) en `publicador.mjs`.
+  2. **Qué problema resuelve**: Garantiza la supervivencia de colas y mensajes ante caídas intempestivas o reinicios del broker RabbitMQ.
+  3. **Qué descarté / Qué se pierde si falta cada una**:
+     * **Si falta el Volumen**: Se pierde todo al recrear el contenedor, porque el disco de RabbitMQ vivía en la capa efímera de escritura de Docker.
+     * **Si falta la Cola Durable**: Aunque exista el volumen, la metadata de la cola residía solo en memoria RAM; al reiniciar RabbitMQ la cola desaparece.
+     * **Si falta el Mensaje Persistent**: La cola durable sobrevive y reaparece tras el reinicio, pero vuelve **completamente vacía**, porque los mensajes no se volcaron al disco.
+  4. **Cómo lo compruebo**: Publicando con el worker apagado, ejecutando `docker compose restart rabbit1` y comprobando con `rabbitmqctl list_queues` que los mensajes persisten en disco.
+
+---
+
+### F.4. «RabbitMQ garantiza al menos una vez. ¿Cómo evitas duplicar registros?»
+* **Fuente**: *D8 Slides 26–28, L7A Slide 24 y L7 Tramo 4.9*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Delegamos la idempotencia en el motor relacional de PostgreSQL mediante una restricción `UNIQUE` en la columna `evento_id` de la tabla `eventos_auditoria`, y el productor genera un UUID único (`x-evento-id`) por cada hecho.
+  2. **Qué problema resuelve**: Previene la duplicación de datos provocada por reentregas legítimas del broker (cuando el consumidor guardó pero la red falló antes del `ack`).
+  3. **Qué descarté**: Descarté hacer una comprobación previa en el código con `if (!await repo.findOne(...))`. Esa consulta previa tiene una **condición de carrera** (*race condition*): si dos instancias del worker procesan duplicados concurrentemente, ambas leen que no existe y ambas ejecutan el insert. Una regla de negocio en un `if` se puede saltar bajo concurrencia; un índice `UNIQUE` en la base de datos es infranqueable.
+  4. **Cómo lo compruebo**: Ejecutando dos veces consecutivas `emitir.mjs 1 --repetido` con el mismo UUID: el worker registra `guardado` en la primera y `reentrega: ya estaba guardado` en la segunda, y `SELECT count(*)` en PostgreSQL devuelve exactamente `1`.
+
+---
+
+### F.5. ¿Qué hace tu consumidor ante un error `23505` de PostgreSQL y por qué NO lo manda a la DLQ?
+* **Fuente**: *L7A Slide 25 y L7 Tramo 4.8*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En el bloque `catch` del consumidor, capturamos `error.code === '23505'` (*unique_violation*), emitimos un log de advertencia (`this.log.warn(...)`) y ejecutamos inmediatamente `canal.ack(mensaje)`.
+  2. **Qué problema resuelve**: Permite que el transporte asíncrono continúe limpio. El código `23505` demuestra que el evento ya fue insertado y procesado exitosamente en una entrega anterior.
+  3. **Qué descarté**: Descarté enviar el error `23505` a la Dead Letter Queue (DLQ). Si enviáramos un duplicado a la DLQ, estaríamos tratando un éxito previo del negocio como un fallo del mensaje, contaminando la DLQ con mensajes perfectamente válidos y alertando falsos positivos a los operadores.
+  4. **Cómo lo compruebo**: Mostrando en `auditoria.consumidor.ts` el bloque `if ((error as { code?: string }).code === '23505') { canal.ack(mensaje); return; }`.
+
+---
+
+### F.6. ¿Por qué el payload de `eventos_auditoria` es `jsonb` y el de `mensajes_muertos` es `text`?
+* **Fuente**: *L7 Tramos 4.4 y 4.5*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En TypeORM definimos `payload: jsonb` para `EventoAuditoria` y `payload: text` para `MensajeMuerto`.
+  2. **Qué problema resuelve**: Modela la realidad ontológica de los datos. Un tipo de columna es una promesa sobre lo que puede ingresar:
+     * Un mensaje que llega a `eventos_auditoria` superó exitosamente el `JSON.parse`: es **JSON válido por definición**. El tipo `jsonb` de PostgreSQL almacena el JSON descompuesto en binario, permitiendo indexar atributos y realizar consultas profundas (ej: `payload ->> 'juegoId'`).
+     * Un mensaje que llega a `mensajes_muertos` es precisamente **el que no pudo procesarse**: puede ser un string truncado, XML, texto plano corrupto o bytes no parseables.
+  3. **Qué descarté**: Descarté tipar `payload` de `mensajes_muertos` como `jsonb`. Si fuera `jsonb`, al intentar registrar un mensaje envenenado (`{ esto no es JSON valido`), Postgres abortaría el `INSERT` por error de sintaxis y el consumidor de cartas muertas moriría intentando registrar por qué murió otro proceso.
+  4. **Cómo lo compruebo**: Emitiendo el mensaje corrupto `emitir.mjs 1 --roto`: el consumidor de cartas muertas lo inserta sin problemas en `mensajes_muertos` y la columna almacena el texto literal rechazado.
+
+---
+
+### F.7. ¿Por qué el estado en la base es un `CHECK` y no un simple `type` o `enum` de TypeScript?
+* **Fuente**: *L7 Tramos 4.5 y 4.11*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Agregamos restricciones relacionales `CHECK (estado IN ('enviada', 'fallida'))` en `notificaciones` y `CHECK (estado IN ('activa', 'revocada'))` en `licencias`.
+  2. **Qué problema resuelve**: Garantiza la integridad de datos a nivel de motor. Un `type Estado = 'enviada' | 'fallida'` solo existe en tiempo de desarrollo y compilación de TypeScript; desaparece por completo al generar el código JavaScript ejecutable. La base de datos no sabe nada de TypeScript.
+  3. **Qué descarté**: Descarté confiar únicamente en la validación del código cliente o de los decoradores de NestJS. Cualquier inserción o modificación que provenga de fuera de la aplicación (un script de migración, una consulta directa de un DBA en `psql`, o un microservicio en otro lenguaje) podría insertar estados arbitrarios como `'pendiente'` o `'borrado'` rompiendo la coherencia del sistema.
+  4. **Cómo lo compruebo**: Ejecutando en `psql` un `INSERT INTO notificaciones (estado, ...) VALUES ('invalido', ...)` y observando el error relacional inmediato: `new row for relation "notificaciones" violates check constraint`.
+
+---
+
+### F.8. ¿Por qué en `CartasMuertasConsumidor` se usa un solo consumidor para las tres DLQ y de dónde saca la cola de origen?
+* **Fuente**: *L7 Tramos 5.1 y 5.4*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En `cartas-muertas.consumidor.ts` implementamos un único consumidor que itera con un bucle `for (const cola of Object.values(DLQ))` sobre las tres colas de cartas muertas, y extrae la cola de origen desde el encabezado `x-first-death-queue`.
+  2. **Qué problema resuelve**: Aplica el principio DRY (Don't Repeat Yourself). El trabajo de registrar una carta muerta es exactamente el mismo sin importar de qué cola provenga. Crear tres clases idénticas triplicaría código innecesariamente.
+  3. **Qué descarté**: Descarté extraer la cola de origen desde `x-death[0].queue`. El arreglo `x-death` viene ordenado cronológicamente con la muerte más reciente primero; si un mensaje sufriera múltiples rechazos sucesivos, `x-death[0]` indicaría la última cola, no la original. RabbitMQ preserva la cola donde el mensaje falló por primera vez en el header inmutable `x-first-death-queue`.
+  4. **Cómo lo compruebo**: Mostrando en el log del worker la línea `[CartasMuertasConsumidor] registrada carta muerta de cola-auditoria`.
+
+---
+
+### F.9. ¿Por qué las DLQ deben declararse ANTES que las colas de trabajo en `declararTopologia`?
+* **Fuente**: *L7A Slide 20 y L7 Tramo 3.3*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En la función `declararTopologia`, el orden inquebrantable es: 1. Declarar Exchanges -> 2. Declarar las tres DLQ y sus bindings al DLX -> 3. Declarar las tres colas de trabajo con `x-dead-letter-exchange` -> 4. Bindings de trabajo.
+  2. **Qué problema resuelve**: Previene la pérdida silenciosa de mensajes descartados. En RabbitMQ, primero debe existir el destino antes que el origen pueda enrutar hacia él.
+  3. **Qué descarté**: Descarté declarar las colas de trabajo primero. Si una cola de trabajo se crea con `deadLetterExchange: 'vidalstore.dlx'` y empieza a recibir mensajes inmediatamente, cualquier descarte (`nack(false, false)`) antes de que las DLQ hayan sido creadas en el broker causaría que RabbitMQ descarte el mensaje al vacío sin generar ningún error, perdiéndose la evidencia para siempre.
+  4. **Cómo lo compruebo**: Mostrando en `topologia.ts` la secuencia de promesas `await canal.assertQueue(DLQ...)` antes de `await canal.assertQueue(COLAS...)`.
+
+---
+
+### F.10. ¿Qué significa el error `406 PRECONDITION_FAILED` al relanzar el worker y cómo se soluciona?
+* **Fuente**: *L7A Slide 21 y L7 Tramo 3.5*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Ante el error `406 PRECONDITION_FAILED`, ejecutamos `docker compose exec rabbit1 rabbitmqctl delete_queue <nombre>` para borrar las colas previas y relanzamos el worker.
+  2. **Qué problema resuelve**: Permite la actualización de argumentos de colas en RabbitMQ. Una cola creada en AMQP es inmutable en su definición básica: no se pueden alterar argumentos como `x-dead-letter-exchange` sobre una cola ya existente.
+  3. **Qué descarté**: Descarté pensar que era un bug de código en TypeScript o reiniciar RabbitMQ borrando volúmenes (`down -v`), lo que destruiría la base de datos de usuarios y configuraciones.
+  4. **Cómo lo compruebo**: Mostrando que tras eliminar la cola huérfana con `delete_queue`, el worker arranca en limpio creando la cola con sus argumentos de cartas muertas sin lanzar excepciones.
+
+---
+
+### F.11. ¿Para qué sirve `prefetch(1)` y qué pasaría con `prefetch(0)` si la base de datos se cae?
+* **Fuente**: *L7A Slide 18 y L7 Tramo 2.4*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Ejecutamos `await this.canal.prefetch(1)` en `mensajeria.service.ts` inmediatamente tras instanciar el canal de comunicación.
+  2. **Qué problema resuelve**: Limita la retención en memoria a exactamente un mensaje sin confirmar por consumidor. Si la base de datos entra en fallo o latencia alta, el consumidor retiene solo ese mensaje mientras ejecuta los reintentos con backoff progresivo (2s, 4s). La cola de RabbitMQ se detiene ordenadamente protegiendo al worker.
+  3. **Qué descarté**: Descarté dejar el valor por omisión o `prefetch(0)` (que en RabbitMQ significa ilimitado). Con `prefetch(0)`, RabbitMQ le entrega de golpe todos los mensajes acumulados en la cola al proceso. Si la base de datos está caída, el consumidor recibiría miles de mensajes en RAM; si el proceso se cae por falta de memoria o reinicio, los miles de mensajes vuelven al broker saturando la red.
+  4. **Cómo lo compruebo**: Ejecutando el experimento de `consumidor-lento.mjs 5` (que simula prefetch 5 y toma 5 mensajes de una sola vez) en comparación con el worker productivo que procesa estrictamente de a uno.
+
+---
+
+### F.12. ¿Por qué el índice de licencias es parcial (`WHERE estado = 'activa'`) y qué fallaría con un UNIQUE simple?
+* **Fuente**: *L7 Tramo 5.3 y 5.4*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En PostgreSQL y TypeORM definimos un índice único parcial: `CREATE UNIQUE INDEX uq_licencias_activas ON licencias (usuario_sub, juego_id) WHERE estado = 'activa'`.
+  2. **Qué problema resuelve**: Implementa en el motor de base de datos la regla de negocio de Arturo: *"Un jugador no puede poseer dos licencias activas del mismo juego, pero sí puede volver a comprarlo legalmente si su licencia previa fue revocada"*.
+  3. **Qué descarté**: Descarté un `UNIQUE (usuario_sub, juego_id)` sin cláusula `WHERE`. Un índice único tradicional bloquearía indefinidamente cualquier compra legítima posterior después de que una licencia fue revocada o devuelta, devolviendo siempre un error de clave duplicada.
+  4. **Cómo lo compruebo**: Ejecutando la secuencia de prueba: 1. `INSERT` licencia activa (éxito); 2. Segundo `INSERT` activa (falla con `duplicate key`); 3. `UPDATE` estado a `'revocada'`; 4. Tercer `INSERT` activa (éxito rotundo).
+
+---
+
+### F.13. ¿Por qué al publicar `licencia.revocada` el `usuarioSub` del evento sale de la fila persistida y no del token del administrador?
+* **Fuente**: *L7 Tramo 5.4 (Página 82)*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En el microservicio de licencias, al procesar `DELETE /v1/licencias/:id`, actualizamos la fila guardando quién revocó (`revocada_por = token.sub`), pero al armar el evento `licencia.revocada` extraemos `usuarioSub` de la columna `licencia.usuario_sub` de la fila persistida.
+  2. **Qué problema resuelve**: Mantiene la semántica del dominio de eventos. El claim `sub` del token Bearer corresponde al **administrador que ejecuta la revocación**. Si pusiéramos ese `sub` en `usuarioSub` del evento, los consumidores aguas abajo (como la cola de avisos y el servicio de correos) enviarían la notificación de revocación a la casilla del administrador en lugar de alertar al jugador afectado.
+  3. **Qué descarté**: Descarté asumir que el `sub` del token es siempre el sujeto afectado por la operación.
+  4. **Cómo lo compruebo**: Mostrando en el código que `usuarioSub: licencia.usuarioSub` y `revocadaPor: subAdmin`, permitiendo que el jugador reciba el aviso de pérdida de acceso y la auditoría conserve la autoría del administrador en `payload ->> 'revocadaPor'`.
+
+---
+
+### F.14. En caso de caída de base de datos en `CartasMuertasConsumidor`, ¿por qué hace `nack(false, true)` con un timeout de 5 segundos?
+* **Fuente**: *L7 Tramo 5.1 (Página 69)*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En el `catch` de `CartasMuertasConsumidor`, si la persistencia en `mensajes_muertos` falla, no hacemos `ack`: programamos un `setTimeout` de 5000 ms y ejecutamos `this.mensajeria.canal.nack(mensaje, false, true)`.
+  2. **Qué problema resuelve**: Evita la pérdida irrecuperable de la última copia del mensaje muerto. Como la DLQ es el destino final de descarte, si la base de datos no puede registrarlo en ese instante, el mensaje no tiene otra DLQ a donde ir. Reencolarlo (`requeue: true`) tras una pausa prudente permite que sobreviva en la DLQ hasta que la base de datos se recupere.
+  3. **Qué descarté**: Descarté hacer `nack` inmediato sin espera (lo que generaría un ciclo continuo al 100% de CPU) o hacer `ack` descartando la carta muerta sin haberla grabado en PostgreSQL.
+  4. **Cómo lo compruebo**: Mostrando en `cartas-muertas.consumidor.ts` la función `setTimeout(() => canal.nack(mensaje, false, true), 5000)`.
+
+---
+
+### F.15. ¿Qué información forense aporta el encabezado `x-death` en las DLQ?
+* **Fuente**: *L7 Tramos 3.7 y 3.8*.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Implementamos la herramienta `herramientas/ver-dlq.mjs` para inspeccionar mensajes en DLQ sin consumirlos y procesamos el array `x-death` en el worker.
+  2. **Qué problema resuelve**: Funciona como la caja negra del fallo en sistemas distribuidos. RabbitMQ inyecta automáticamente metadatos forenses inmutables:
+     * `queue`: De qué cola provino el rechazo.
+     * `reason`: Por qué murió (`rejected` por código, `expired` por TTL o `maxlen` por sobrecupo).
+     * `count`: Cuántas veces fue rechazado (revela bucles de reintento).
+     * `routing-keys`: La routing key original con la que nació el evento (ya que en la DLQ viaja con el nombre de la cola).
+     * `time`: Timestamp AMQP preciso de la defunción.
+  3. **Qué descarté**: Descarté depender únicamente de logs efímeros de consola que se pierden al reiniciar contenedores.
+  4. **Cómo lo compruebo**: Ejecutando `docker compose run --rm --no-deps eventos node herramientas/ver-dlq.mjs cola-auditoria.dlq` y observando el JSON estructurado de cabeceras.
+
+
 
 
