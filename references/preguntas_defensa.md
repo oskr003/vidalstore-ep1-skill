@@ -184,3 +184,15 @@ Este documento consolida:
   > 3. **Existencia en BD (HTTP 404)**: Ejecuta `DELETE FROM mensajes_muertos WHERE id = $1`. Si `resultado.rowCount === 0`, significa que el ID no existe o ya fue eliminado, arrojando `NotFoundException('Mensaje muerto con ID ... no encontrado')` (HTTP 404).
   > 4. **Tolerancia a Fallos (HTTP 503)**: Si PostgreSQL está fuera de servicio o pierde la conexión, captura el error y lanza `ServiceUnavailableException` (HTTP 503).
   > 5. **Éxito (HTTP 200)**: Si `rowCount === 1`, confirma con `{ id, mensaje: 'Mensaje muerto eliminado exitosamente', eliminado: true }`."
+
+---
+
+### G.10. ¿Cómo funciona el flujo de reprocesamiento de DLQ (`POST /v1/admin/dlq/:id/reproceso`) y cómo garantiza idempotencia y trazabilidad? (Requisito Grupos de 3 · IE14, IE17)
+* **Respuesta Técnica**:
+  > "Es la capacidad operativa avanzada de remediación para grupos de 3 (dueño: Oscar):
+  > 1. **Identidad y No-Repudio**: Extrae el `adminSub` del JWT autenticado para auditar qué administrador disparó la remediación.
+  > 2. **Verificación en BD e Idempotencia (400 vs 404)**: Consulta la tabla `mensajes_muertos`. Si el registro no existe, arroja `NotFoundException` (404). Si ya tiene `reprocesada = true`, arroja `BadRequestException('El mensaje muerto con ID ... ya fue reprocesado previamente')` (400), impidiendo inundar el broker con reintentos duplicados no deseados.
+  > 3. **Republicación Atómica**: Invoca `republicarMensaje` hacia `vidalstore.dlx` con routing key `dlq.reprocesar` con entrega persistente (`persistent: true`). Inyecta la metadata forense (`reprocesoId`, `colaOrigen`, `routingKeyOriginal`, `motivoOriginal`, `intentosPrevios`, `payload`, `reprocesadoPor`, `reprocesadoEn`).
+  > 4. **Persistencia del Estado**: Ejecuta `UPDATE mensajes_muertos SET reprocesada = true WHERE id = $1` en PostgreSQL.
+  > 5. **Tolerancia a Fallos**: Si RabbitMQ o PostgreSQL están caídos (`ECONNREFUSED` o timeout), captura la excepción y retorna `503 Service Unavailable`, evitando estados inconsistentes y sin botar el proceso."
+
