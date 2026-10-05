@@ -1,11 +1,13 @@
-# Banco de Preguntas y Respuestas Modelo · Defensa Individual EP1
+# Banco de Preguntas y Respuestas Modelo · Defensa Individual EP1 y EP2
 
-La defensa técnica individual representa el **60% de la nota final de la EP1**. El docente Cristian Calderón (`Umbingelelo`) realiza preguntas profundas sobre las decisiones de arquitectura, los tokens, los flujos criptográficos y las pruebas en vivo.
+La defensa técnica individual representa el **60% de la nota final** (tanto en EP1 como en EP2). El docente Cristian Calderón (`Umbingelelo`) realiza preguntas profundas sobre las decisiones de arquitectura, los tokens, los flujos criptográficos, la mensajería asíncrona, Docker Compose, DLQ y las pruebas en vivo.
 
 Este documento consolida:
-1. **Las 8 preguntas oficiales y obligatorias de la guía oficial `Pulso.pdf` (Tramo 12.2)**.
-2. **Las preguntas complementarias de rúbrica (IE1 a IE10), caso forense de VidalStore y discusiones de GitHub**.
-3. **El guion oficial de la defensa técnica de la clase magistral D6 ("Git en serio y defender una arquitectura")**: el reloj de 15 minutos, los 5 flujos de punta a punta, preguntas con señales de alarma, framework de 4 pasos, modificación señalada y botón COMPRAR.
+1. **Las 8 preguntas oficiales de `Pulso.pdf` (Tramo 12.2)** (Bloque A).
+2. **Las preguntas complementarias de rúbrica EP1 (IE1 a IE10)** (Bloques B, C, D y E).
+3. **El guion oficial de defensa técnica de la clase D6**: reloj de 15 minutos, 5 flujos y método de 4 pasos.
+4. **Las 15 preguntas oficiales de D8, L7A y L7 (Mensajería, Compose, DLQ y Persistencia)** (Bloque F).
+5. **Las preguntas de defensa del Microservicio Administrador (Oscar · IE6, IE7, IE8, IE14, IE17, IE18)** (Bloque G).
 
 ---
 
@@ -828,6 +830,62 @@ Este bloque consolida las preguntas de defensa individual de la **Semana 9**, ex
   3. **Qué descarté**: Descarté depender únicamente de logs efímeros de consola que se pierden al reiniciar contenedores.
   4. **Cómo lo compruebo**: Ejecutando `docker compose run --rm --no-deps eventos node herramientas/ver-dlq.mjs cola-auditoria.dlq` y observando el JSON estructurado de cabeceras.
 
+---
 
+## Bloque G: Microservicio Administrador y Métricas de Broker (Oscar · IE6, IE7, IE8, IE14, IE17, IE18)
 
+Este bloque consolida las preguntas y respuestas técnicas evaluadas durante la presentación individual de 15 minutos para el dueño de `vidalstore-admin`.
 
+---
+
+### G.1. ¿Por qué los controladores de `vidalstore-admin` nunca importan `amqplib` directamente ni realizan peticiones `fetch` de red?
+* **Indicador de Rúbrica**: **IE7 (10% encargo grupal)**.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Encapsulé el 100% del acceso a RabbitMQ (tanto el canal AMQP `:5672` como el cliente HTTP de la Management API `:15672`) dentro de la clase `RabbitAdminService`, e inyecté este servicio en `AdminController`.
+  2. **Qué problema resuelve**: Cumple con el principio de desacoplamiento de capas y responsabilidad única. Si cambia la URL del broker, el protocolo, las credenciales o los endpoints de la API de RabbitMQ, los controladores de NestJS no sufren alteraciones ni conocen detalles de bajo nivel.
+  3. **Qué descarté**: Descarté importar `amqplib` en los controllers o dispersar llamadas `fetch` con cabeceras `Basic Auth` en cada método, lo que habría roto la arquitectura modular y duplicado lógica de red.
+  4. **Cómo lo compruebo**: Mostrando [src/admin/admin.controller.ts](file:///Users/oscar/Downloads/DUOC/CloudNative/Evaluacion%202/vidalstore-admin/src/admin/admin.controller.ts), donde se evidencia que el controlador solo interactúa con métodos de alto nivel (`listarColas()`, `obtenerDetalleCola()`, `listarExchanges()`, `publicarEvento()`), y corriendo la suite de tests con mocks de servicio.
+
+---
+
+### G.2. Si RabbitMQ o el puerto 15672 se cae, ¿qué responde tu microservicio y por qué no devolvemos un error 500 genérico?
+* **Indicador de Rúbrica**: **IE17 (12% defensa individual)**.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En `RabbitAdminService`, envolví las peticiones `fetch` con un `AbortSignal.timeout(5000)` y un bloque `catch` que captura `ECONNREFUSED`, `TimeoutError` o errores de socket, transformándolos inmediatamente en una excepción `ServiceUnavailableException` (HTTP 503).
+  2. **Qué problema resuelve**: Garantiza la resiliencia y el manejo robusto de errores exigido por la rúbrica (IE17). Le comunica semánticamente al cliente (Postman, Frontend o Gateway) que el problema no es un bug del microservicio ni un error de código interno, sino que la infraestructura subyacente está temporalmente fuera de servicio.
+  3. **Qué descarté**: Descarté permitir que el error de conexión se propague como un error 500 ciego sin mensaje útil o que el hilo quede congelado indefinidamente sin timeout.
+  4. **Cómo lo compruebo**: Mostrando la prueba unitaria `debe lanzar ServiceUnavailableException (HTTP 503) cuando RabbitMQ está caído` en [src/admin/rabbit-admin.service.spec.ts](file:///Users/oscar/Downloads/DUOC/CloudNative/Evaluacion%202/vidalstore-admin/src/admin/rabbit-admin.service.spec.ts).
+
+---
+
+### G.3. En tu endpoint `GET /v1/admin/queues`, ¿qué significa exactamente `messages_unacknowledged` y cómo actuar si este número comienza a crecer sin detenerse?
+* **Indicador de Rúbrica**: **IE18 (8% defensa individual)**.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En `QueueResponseDto` y en `listarColas()`, extraje la métrica `messages_unacknowledged` de cada cola directamente desde `/api/queues`.
+  2. **Qué problema resuelve**: Permite diagnosticar la salud de los consumidores. Un mensaje `unacknowledged` es un mensaje que RabbitMQ ya entregó por TCP a un worker (`AvisosConsumer`, `AuditoriaConsumer`), pero que el worker aún no ha confirmado con `ack()` ni rechazado con `nack()`. El mensaje está "en vuelo".
+  3. **Qué descarté y Diagnóstico de Anomalía**:
+     * Si `messages_unacknowledged` sube y no baja, **no es un fallo de RabbitMQ**: es un síntoma de que un consumidor tiene una fuga de promesas o un bloqueo (llamada colgada a Postgres o API externa sin timeout) que le impide invocar `canal.ack(mensaje)`.
+     * Gracias a `{ noAck: false }` y `prefetch(1)`, ese consumidor queda saturado y no absorbe más mensajes.
+  4. **Cómo actuar (Remediación operativa)**:
+     * Si el worker está trabado, se reinicia su contenedor (`docker restart eventos`).
+     * Al cerrarse la conexión TCP, RabbitMQ devuelve automáticamente todos los mensajes `unacknowledged` al estado `messages_ready`, reencolándolos para que otro worker sano los procese sin pérdida de información (*at least once delivery*).
+
+---
+
+### G.4. En `GET /v1/admin/queues/:name`, ¿por qué responder HTTP 404 ante una cola inexistente y cómo se diferencia de una lista vacía?
+* **Indicador de Rúbrica**: **IE17 (12% defensa individual)**.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: En `obtenerDetalleCola(nombre)`, consultamos `/api/queues/%2f/:name`. Si la API de RabbitMQ responde 404, lanzamos `NotFoundException("La cola '...' no existe en RabbitMQ")`.
+  2. **Qué problema resuelve**: Respeta estrictamente la semántica HTTP REST. Mientras que un endpoint de colección (`GET /queues`) debe retornar `200 OK` con un array vacío `[]` si no hay elementos, un endpoint de recurso singular (`GET /queues/:name`) debe responder `404 Not Found` si el identificador puntual no existe.
+  3. **Qué descarté**: Descarté devolver `null` o `200 OK` con un objeto vacío, lo que confundiría a los clientes haciéndoles creer que la cola existe con 0 mensajes.
+  4. **Cómo lo compruebo**: Mostrando la prueba unitaria que verifica que `/v1/admin/queues/fantasma` rechaza con `NotFoundException` (HTTP 404).
+
+---
+
+### G.5. En `GET /v1/admin/exchanges`, ¿por qué `vidalstore.eventos` es `topic` mientras que `vidalstore.comandos` y `vidalstore.dlx` son `direct`?
+* **Indicador de Rúbrica**: **IE14 (6% defensa) e IE6**.
+* **Respuesta Técnica Modelo (4 Pasos)**:
+  1. **Qué hice**: Implementé `GET /v1/admin/exchanges` que refleja la topología: `vidalstore.eventos` es `topic`, y `vidalstore.comandos` junto con `vidalstore.dlx` son `direct`.
+  2. **Por qué `topic` para eventos**: Los eventos de negocio (`compra.realizada`, `licencia.revocada`) representan hechos consumados que interesan a múltiples consumidores simultáneamente (fan-out selectivo). El tipo `topic` permite ruteo por patrones jerárquicos con wildcards (`#.realizada`, `compra.*`), permitiendo que `q.avisos` y `q.auditoria` escuchen sin que el productor sepa de su existencia.
+  3. **Por qué `direct` para comandos y DLX**: Los comandos (`correo.enviar`) tienen un destinatario único y determinista (`q.correos`). De la misma manera, en `vidalstore.dlx`, cada cola de trabajo desvía sus mensajes muertos a su propia DLQ usando su nombre exacto como clave de ruteo (`dlq.avisos`, `dlq.auditoria`, `dlq.correos`).
+  4. **Cómo lo compruebo**: Mostrando la salida del endpoint `GET /v1/admin/exchanges` y el archivo [src/mensajeria/topologia.ts](file:///Users/oscar/Downloads/DUOC/CloudNative/Evaluacion%202/vidalstore-admin/src/mensajeria/topologia.ts).

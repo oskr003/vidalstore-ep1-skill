@@ -154,10 +154,10 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
       - Tabla `licencias`: `id serial PK`, `juego_id int`, `usuario_sub text`, `estado text CHECK (estado IN ('activa', 'revocada'))`, `adquirida_en timestamptz`, `revocada_en timestamptz`, `revocada_por text`.
       - **Índice parcial obligatorio**: `UNIQUE (usuario_sub, juego_id) WHERE estado = 'activa'` (permite volver a comprar si fue revocada; regla de Arturo en base de datos).
       - Cero Foreign Keys entre servicios. Manejo de conexión con `pool.on('error', ...)` para evitar que reinicios de Postgres boten el proceso de Node.
-30. **Metodología Obligatoria: Plan de Implementación y Walkthrough Técnico**:
+30. **Metodología Obligatoria: Plan de Implementación y Walkthrough Técnico (Skill Viva)**:
     - **Antes de codear**: Toda feature o rama de trabajo debe contar obligatoriamente con un **Plan de Implementación Formal** presentado como artefacto interactivo (`RequestFeedback: true`). Debe declarar: contexto de rúbrica (indicadores y %), diagrama Mermaid, fases atómicas paso a paso, contratos e interfaces TypeScript, política estricta de resiliencia y códigos HTTP (400, 404, 503, nunca 500 ciego), estrategia de pruebas en Vitest y propuesta de commits atómicos.
     - **Durante el trabajo**: Ejecución estrictamente atómica, validando tests en cada etapa y respetando la prohibición de tocar Git sin autorización explícita previa.
-    - **Al terminar**: Generación obligatoria de un **Walkthrough de Cierre** que certifique la salida completa de los tests, evidencie el manejo de fallos y proporcione el guión técnico con preguntas y respuestas para la defensa individual de 15 minutos ante el profesor.
+    - **Al terminar (Sincronización de Skill Viva)**: Generación obligatoria de un **Walkthrough de Cierre** e **incorporación inmediata de sus preguntas técnicas y decisiones de arquitectura dentro de la skill** ([references/preguntas_defensa.md](./references/preguntas_defensa.md)). De esta forma, la skill evoluciona incrementalmente con cada commit y el estudiante dispone de un banco de estudio unificado y vivo para su defensa individual de 15 minutos.
     - Plantillas y especificación completa en [references/metodologia_plan_y_walkthrough.md](./references/metodologia_plan_y_walkthrough.md).
 
 ---
@@ -203,6 +203,8 @@ Para responder cualquier decisión de arquitectura:
 
 ## 3. Mapa de Rutas del Sistema (Matriz de Permisos)
 
+### 3.1 Rutas de la Cadena Sincrónica (EP1 · Gateway :8080 y BFF :3001)
+
 | Método | Ruta | Autoriza por | Grupos / Condición | Código de Éxito | Códigos de Error |
 |---|---|---|---|:---:|:---:|
 | `GET` | `/v1/catalogo` | Scope | `vidalstore/catalogo.leer` (cualquier sesión válida) | `200 OK` | `401`, `403` |
@@ -213,6 +215,21 @@ Para responder cualquier decisión de arquitectura:
 | `GET` | `/v1/licencias` | Grupo | `administradores` (lista licencias de todos) | `200 OK` | `401`, `403` |
 | `DELETE` | `/v1/licencias/:licenciaId` | Grupo | `administradores` (revoca licencia) | `200 OK` | `401`, `403`, `404` |
 | `GET` | `/v1/auditoria` | Grupo | `administradores` (obligatoria para grupos de 3) | `200 OK` | `401`, `403` |
+
+### 3.2 Rutas del Microservicio Administrador (EP2 · vidalstore-admin :3020 · Oscar)
+
+| Método | Ruta | Autenticación | Qué Hace / Métricas Relevantes | Código de Éxito | Códigos de Error (IE17) |
+|---|---|---|---|:---:|:---:|
+| `GET` | `/v1/admin/queues` | `AuthGuard` (JWT) | Lista todas las colas con `messages`, `ready`, `unacked` y `consumers` (IE18) | `200 OK` | `401`, `503` |
+| `GET` | `/v1/admin/queues/:name` | `AuthGuard` (JWT) | Detalle y metadata de una cola (`x-dead-letter`, estado, memoria) | `200 OK` | `401`, `404`, `503` |
+| `GET` | `/v1/admin/exchanges` | `AuthGuard` (JWT) | Lista exchanges declarados (`topic` vs `direct`, durabilidad) | `200 OK` | `401`, `503` |
+| `POST` | `/v1/admin/publicar` | `AuthGuard` (JWT) | Publica evento administrativo inyectando `adminSub` de `req.user.sub` | `200 OK` | `400`, `401`, `503` |
+| `GET` | `/v1/admin/auth-test` | `AuthGuard` (JWT) | Prueba de verificación de claims (`sub`, grupos) | `200 OK` | `401` |
+| `GET` | `/v1/admin/me` | `AuthGuard` (JWT) | Retorna identidad del token autenticado | `200 OK` | `401` |
+| `GET` | `/v1/admin/bindings` | `AuthGuard` (JWT) | *(Siguiente rama)* Lista bindings activos entre exchanges y colas | `200 OK` | `401`, `503` |
+| `GET` | `/v1/admin/mensajes-muertos` | `AuthGuard` (JWT) | *(Semana 9)* Lista mensajes envenenados en tabla `mensajes_muertos` | `200 OK` | `401`, `503` |
+| `DELETE` | `/v1/admin/mensajes-muertos/:id`| `AuthGuard` (JWT) | *(Semana 9)* Elimina registro de mensaje muerto por ID | `200 OK` | `401`, `404`, `503` |
+| `POST` | `/v1/admin/dlq/:id/reproceso` | `AuthGuard` (JWT) | *(Grupos de 3)* Republica con `dlq.reprocesar` y marca `reprocesada=true` | `200 OK` | `400`, `401`, `404`, `503` |
 
 ---
 
