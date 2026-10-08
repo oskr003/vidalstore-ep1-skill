@@ -92,29 +92,61 @@ La EP2 evalúa la arquitectura de mensajería asíncrona, Docker Compose, clúst
 
 ### 4.1 Encargo Técnico Grupal (40% de la EP2)
 
-| Indicador | Peso en Encargo | Dónde Quedó Resuelto | Criterio de Logro Destacado (100%) | Causa de No Logrado (0%) |
+| Indicador | Peso en Encargo | Dónde se Pide | Criterio de Logro Destacado (100%) | Causa de No Logrado (0%) |
 |---|:---:|:---:|---|---|
-| **IE1. Centralización de Topología** | **12%** | L6 / L7 Tramo 3 (`topologia.ts` y `topologia.mjs`) | Nombres de colas, exchanges, bindings y routing keys declarados de forma centralizada en objetos inmutables. Ningún string mágico suelto en consumidores o controladores. | Strings de exchanges o colas escritos a mano en los servicios. |
-| **IE2. Declaración de Configuración RabbitMQ** | **13%** | L6 / L7 Tramo 3 (`declararTopologia` y `docs/topologia.md`) | Función `declararTopologia` declara todos los exchanges (topic, direct, dlx), colas de trabajo, DLQs y bindings antes de consumir. Documentado en Markdown. | Topología declarada parcialmente o sin DLQs; colas sin argumentos `x-dead-letter-*`. |
-| **IE3. Desacoplamiento de Negocio y Mensajería** | **10%** | L7 Tramo 5.3 (`publicador.mjs`) | `topologia.ts` no conoce la lógica de negocio; el microservicio productor publica exclusivamente a través de un módulo `publicador.mjs` desacoplado del servidor HTTP. | Servidor HTTP o lógica de negocio invocando directamente métodos de bajo nivel de `amqplib`. |
-| **IE4. Consumidores por Dominio Funcional** | **15%** | L6 / L7 (`src/mensajeria/consumidores/`) | Cuatro consumidores implementados en archivos y módulos NestJS independientes: Avisos, Auditoría, Correos y Cartas Muertas. | Consumidores mezclados en un solo archivo monolítico o sin modularización en NestJS. |
-| **IE5. Confirmación ACK y Manejo de Errores** | **20%** | L7 Tramos 2, 3 y 4 | `canal.ack(mensaje)` tras persistir con éxito; rechazo explícito `canal.nack(mensaje, false, false)` hacia DLQ para errores del mensaje; `canal.ack(mensaje)` para colisiones por duplicado (`23505`); reintentos (`conReintentos`) ante fallos de conexión. Rutas documentadas en README. | Usar `noAck: true`, hacer ack antes de persistir, o mandar duplicados legítimos a la DLQ. |
-| **IE6. Microservicio Administrador** | **13%** | L8 / Semana 10 (`vidalstore-admin`) | Microservicio NestJS independiente en puerto `:3020` con `RabbitAdminService` para gestión del clúster. | Microservicio ausente o embebido dentro del worker. |
-| **IE7. Endpoints de Gestión Administrativa** | **10%** | L8 / Semana 10 (`vidalstore-admin`) | 8 endpoints REST operativos para consultar colas, métricas, purgar mensajes y reprocesar cartas muertas. | Endpoints incompletos o sin validación de roles de administrador. |
-| **IE8. Gestión y Monitoreo del Clúster** | **7%** | L8 / Semana 10 (`vidalstore-admin`) | Integración con la API de administración de RabbitMQ para monitorear estados y emitir alarmas. | Sin monitoreo ni integración con la API de RabbitMQ. |
+| **IE1. Define de forma centralizada los nombres de colas, exchanges y bindings** | **12%** | 4.1 | Todos los nombres están en el archivo de topología de cada proyecto que toca mensajería. No hay ningún valor suelto en el código, y los nombres coinciden entre los productores y el consumidor. | No hay configuración centralizada: los nombres están dispersos en el código. |
+| **IE2. Declara la configuración de RabbitMQ con Queue, Exchange y Binding para cada caso de uso** | **13%** | 4.1 · 4.8 | Los tres exchanges, las seis colas y todos los bindings están declarados, cada ruta de mensajería identificada y documentada en `docs/topologia.md`. | No hay declaración de colas, exchanges ni bindings. |
+| **IE3. El código no mezcla la lógica de negocio con la configuración de mensajería. Hay clases de configuración separadas** | **10%** | 4.1 · 4.2 · 4.4 | La configuración está aislada en la carpeta `mensajeria/` de cada proyecto. Los consumidores y los services solo reciben lo ya configurado. No hay un `assertQueue` ni un nombre de cola dentro de un consumidor. | No hay separación: la configuración está incrustada en la lógica de negocio. |
+| **IE4. Los consumidores están implementados con el mecanismo que corresponde y se agrupan por dominio funcional** | **15%** | 4.2 | Un consumidor por dominio, cada uno en su archivo y su módulo, con nombres que dicen de qué dominio son. La estructura refleja la separación de responsabilidades. | No se implementan consumidores, o no hay ninguna organización. |
+| **IE5. En los consumidores se maneja la confirmación de mensajes: uso de ACK y manejo explícito de errores** | **20%** | 4.3 · 4.4 | `noAck: false` y prefetch explícito. `ack` después del trabajo. Rutas diferenciadas entre reintento, `nack` sin requeue y DLQ, según el tipo de error, documentadas y consistentes. | No hay ACK ni manejo de errores: los consumidores procesan sin control de flujo. |
+| **IE6. El microservicio administrador expone endpoints REST bien definidos** | **13%** | 4.5 | Las ocho rutas del punto 4.5, con verbos y recursos coherentes, protegidas por rol (`administradores`) y documentadas. | No existe el microservicio administrador, o no expone rutas REST. |
+| **IE7. La lógica para crear colas y exchanges está encapsulada en un `RabbitAdminService`** | **10%** | 4.5 | Toda la administración está en un servicio dedicado. Los controladores llaman métodos de alto nivel y no conocen `amqplib` ni la API del broker. | No existe un servicio dedicado. |
+| **IE8. La API valida los parámetros de entrada** | **7%** | 4.5 | DTOs con validación y `ValidationPipe` con `whitelist: true` y `forbidNonWhitelisted: true`. No se puede crear una cola con nombre vacío ni un exchange de tipo inexistente, y un campo que no existe responde `400 Bad Request`. | No se valida: el backend acepta cualquier dato o responde 500 ante datos vacíos. |
+
+---
 
 ### 4.2 Presentación y Defensa Técnica Individual (60% de la EP2)
 
-| Indicador | Peso en Defensa | Dónde Quedó Resuelto | Criterio de Logro Destacado (100%) | Causa de No Logrado (0%) |
+| Indicador | Peso en Defensa | Dónde se Pide | Criterio de Logro Destacado (100%) | Causa de No Logrado (0%) |
 |---|:---:|:---:|---|---|
-| **IE9. Clúster de Dos Nodos** | **5%** | L8 | Clúster RabbitMQ operativo con `rabbit1` y `rabbit2` compartiendo el Erlang cookie y formando un clúster activo. | Solo un nodo corriendo o nodos aislados sin clustering. |
-| **IE10. Sincronización y Alta Disponibilidad** | **8%** | L8 | Demostración en vivo de sincronización de mensajes entre nodos ante detención intempestiva de un nodo. | Caída del nodo primario provoca pérdida de colas o interrupción del servicio. |
-| **IE11. Orquestación con Docker Compose** | **17%** | L7 Tramo 1 / L8 | `compose.yml` levanta el sistema completo (8 servicios), con volúmenes nombrados, redes dedicadas, variables `.env`, `healthcheck` y `depends_on: { condition: service_healthy }`. | Usar scripts con `docker run` dispersos, sin healthcheck o con errores de indentación. |
-| **IE12. Tres Colas de Trabajo Diferenciadas** | **7%** | L6 / L7 | Tres colas de trabajo para responsabilidades distintas: avisos, auditoría global y correos. | Menos de tres colas o colas sin justificación de negocio. |
-| **IE13. DLQ por Cada Cola de Trabajo** | **9%** | L7 Tramo 3 | Tres DLQs vinculadas al exchange direct `vidalstore.dlx`, cada una recibiendo los descartes de su cola de trabajo respectiva. | No hay DLQ, o se usa una sola DLQ genérica sin trazabilidad de origen. |
-| **IE14. Dos Tipos de Exchange (Direct y Topic)** | **6%** | L6 / L7 Tramo 3 | Uso correcto de `topic` para eventos (`vidalstore.eventos`) con ruteo por patrones (`#`, `compra.*`) y `direct` para comandos (`vidalstore.comandos`) y descartes (`vidalstore.dlx`). | Usar solo un tipo de exchange o usar el exchange por omisión (default exchange). |
-| **IE15. Microservicios del Frontend a Postgres** | **10%** | L7 Tramos 4 y 5 | Flujo de punta a punta: el frontend gatilla la compra, el productor guarda en PostgreSQL y publica el evento, y el worker lo consume y persiste con TypeORM. | La cadena se corta en algún punto o los eventos no impactan la base de datos relacional. |
-| **IE16. Registro Forense de Cartas Muertas** | **8%** | L7 Tramo 5 | `CartasMuertasConsumidor` consume las 3 DLQ, lee los encabezados `x-death` y persiste el registro en la tabla `mensajes_muertos` (columna `payload text`). | Cartas muertas acumuladas en cola sin consumidor o caída por intentar parsear como `jsonb`. |
-| **IE17. Demostración del Microservicio Admin** | **12%** | L8 / Semana 10 | Ejecución en vivo de los endpoints administrativos desde Swagger, Postman o curl ante el docente. | Fallo en la invocación de endpoints o falta de evidencias de reprocesamiento. |
-| **IE18. Métricas del Clúster en Vivo** | **8%** | L8 / Semana 10 | Exposición de métricas de tasas de mensajes (publicados, entregados, acked) en tiempo real. | Ausencia de métricas o métricas estáticas sin correlación con el broker. |
-| **IE19. Políticas de Retención y Limpieza** | **10%** | L8 / Semana 10 | Definición y aplicación de políticas en RabbitMQ (`set_policy`) para TTL de mensajes y límite de longitud máxima de colas. | Colas sin políticas de retención permitiendo crecimiento infinito no supervisado. |
+| **IE9. Configura dos nodos de RabbitMQ** | **5%** | 4.7 · 5.1(2) | Dos nodos operativos, con parámetros consistentes, cada uno con su volumen y su puerto, mostrados en vivo. | No hay dos nodos. |
+| **IE10. Configura un clúster de RabbitMQ con esos dos nodos** | **8%** | 4.7 · 5.1(3) | El clúster se reconoce como tal, distribuye colas y conexiones, y el grupo explica qué comparten los nodos y qué pasa al caer uno. | No hay clúster. |
+| **IE11. Levanta el clúster utilizando Docker Compose** | **17%** | 4.7 · 4.8 · 5.1(1) | Un `compose.yml` del repositorio levanta el clúster completo con un solo comando desde un clon limpio, con volúmenes, healthcheck y el arranque en orden (`--wait`, o `depends_on` con `condition: service_healthy`), y queda documentado. | No se levanta el clúster con Compose. |
+| **IE12. Utiliza tres colas para distintas funcionalidades del sistema** | **7%** | 4.1 · 4.2 · 5.1(5) | Tres colas de trabajo claramente diferenciadas, cada una con su caso de uso, su binding y su consumidor, evidenciadas en el código y en la interfaz. | Menos de tres colas, o sin separación funcional. |
+| **IE13. Cada cola tiene su DLQ para los mensajes en estado de carta muerta** | **9%** | 4.1 · 4.3 · 5.1(6) | Las tres colas de trabajo con su DLQ, con el dead-letter exchange y la routing key correctas, declaradas antes que las colas de trabajo. | No hay DLQ. |
+| **IE14. Utiliza dos tipos de exchange distintos: direct y topic** | **6%** | 4.1 · 5.1(4) | Los dos tipos en uso real, con patrones bien diseñados, y la explicación de cuándo corresponde cada uno. | Solo se usa un tipo de exchange. |
+| **IE15. Integra los microservicios con las colas de manera que escriban y lean mensajes** | **10%** | 4.2 · 4.4 · 4.6 · 5.1(7) | El productor publica y los consumidores consumen, con el flujo completo demostrado en vivo desde el frontend hasta Postgres. | No hay integración con las colas. |
+| **IE16. Integra los microservicios con las DLQ para registrar en logs los mensajes no entregados** | **8%** | 4.3 · 5.1(8) | El consumidor de mensajes muertos registra cola de origen, routing key, motivo e intentos, y guarda el payload en `mensajes_muertos`. Se demuestra con un mensaje envenenado. | No hay integración con las DLQ. |
+| **IE17. Implementa un microservicio administrador que crea colas, exchanges y bindings, y elimina colas y exchanges** | **12%** | 4.5 · 5.1(9) | Las seis operaciones demostradas en vivo, encapsuladas en el servicio, con diseño robusto y errores controlados (400, 404, 503). | No hay microservicio administrador. |
+| **IE18. Explica de manera fundamentada las métricas de monitoreo del clúster** | **8%** | 4.8 · 5.1(10) | Explica colas activas, mensajes pendientes (`ready`), `unacked`, consumidores y mensajes en DLQ; cómo interpretar los valores, qué impacto tienen y qué se hace ante cada anomalía. | No explica las métricas, o entrega información incorrecta. |
+| **IE19. Implementa políticas de retención y limpieza: límites de cola y expiración** | **10%** | 4.7 · 5.1(11) | Políticas declaradas en el repositorio para las seis colas, con límites, overflow y expiración justificados y documentados, y una demostrada en vivo. | No hay políticas de retención ni limpieza. |
+
+---
+
+### 4.3 El Orden Oficial de la Demostración en Vivo (11 Pasos de §5.1)
+
+El docente evalúa la presentación siguiendo estrictamente este recorrido de 11 pasos cronológicos con el sistema previamente apagado (sin `-v`):
+1. **`compose.yml` y clúster levantándose (IE11 · 17%)**: `docker compose up -d --wait` desde el clon limpio de `vidalstore-plataforma`.
+2. **Los dos nodos (IE9 · 5%)**: Management UI en `:15672` y `:15673`, o `rabbitmq-diagnostics status` en cada nodo.
+3. **El clúster formado (IE10 · 8%)**: `rabbitmqctl cluster_status` o pestaña Overview mostrando `rabbit@rabbit1` y `rabbit@rabbit2` compartiendo cookie y metadatos.
+4. **Exchanges direct y topic (IE14 · 6%)**: Los 3 exchanges en la interfaz y explicación de ruteo por qué eventos a `topic` y comandos a `direct`.
+5. **Las tres colas y sus tres funciones (IE12 · 7%)**: 6 colas en interfaz (3 trabajo + 3 DLQ), justificando caso de uso, binding y consumidor.
+6. **Cada cola con su DLQ (IE13 · 9%)**: Argumentos `x-dead-letter-exchange` y `x-dead-letter-routing-key` mostrados en la interfaz.
+7. **Flujo completo con revocación de licencia (IE15 · 10%)**: Revocación desde Angular $\rightarrow$ Gateway $\rightarrow$ BFF $\rightarrow$ Licencias (escribe en Postgres y publica) $\rightarrow$ logs de consumidores $\rightarrow$ comando `correo.enviar` $\rightarrow$ tablas en Postgres proyectadas sobre el ERD.
+8. **Mensaje envenenado (IE16 · 8%)**: Publicar mensaje corrupto $\rightarrow$ `nack` en log $\rightarrow$ desvío a DLQ $\rightarrow$ persistencia en `mensajes_muertos` con `payload text` y `x-death`.
+9. **Microservicio administrador (IE17 · 12%, IE8 · 7%)**: Operaciones CRUD de topología en vivo y rechazo con `400 Bad Request` ante entradas inválidas.
+10. **Métricas del clúster con tráfico real (IE18 · 8%)**: Interpretación de `ready`, `unacked`, `consumers` y DLQ en vivo.
+11. **Políticas de retención y desborde (IE19 · 10%)**: Demostración de política en cola de prueba con `max-length` y comportamiento de `overflow` (`drop-head` vs `reject-publish`).
+* **Cierre: Caída de un nodo**: Detener `rabbit2` y explicar por qué con 2 nodos la mayoría es 2 y las publicaciones se suspenden (estado `minority`).
+
+---
+
+### 4.4 Orden Estricto de Prioridades si no Alcanza el Tiempo (§7 de EP2)
+1. **Clúster levantándose con Compose (IE11, IE9, IE10)**: 30 pts presentación.
+2. **Tres colas con DLQ y dos tipos de exchange (IE12, IE13, IE14, IE1, IE2)**: 22 pts presentación + 25 pts encargo.
+3. **Ack, manejo de errores y flujo completo (IE5, IE15, IE16, IE4)**: 35 pts encargo + 18 pts presentación.
+4. **Microservicio administrador con servicio y validación (IE6, IE7, IE8, IE17)**: 30 pts encargo + 12 pts presentación.
+5. **Base de datos con 4 tablas y restricciones (IE5, IE15)**: `eventos_auditoria` con `UNIQUE (evento_id)` es la prioridad máxima.
+6. **Políticas de retención (IE19)**: 10 pts presentación.
+7. **Métricas explicadas (IE18)**: 8 pts presentación.
+8. **Documentación restante**: `README.md` y `docs/modelo-de-datos.md`.

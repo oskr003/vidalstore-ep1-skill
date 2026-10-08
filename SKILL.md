@@ -2,7 +2,7 @@
 name: vidalstore-ep1
 description: >-
   Auditoría, verificación estricta y preparación técnica integral para DSY1107 - Desarrollo Cloud Native I (DUOC UC), cubriendo la Evaluación Parcial N°1 (EP1 - Caso VidalStore) y la Unidad 2 / EP2 (Mensajería Asíncrona, RabbitMQ, Docker Compose, DLQ y Persistencia Relacional con PostgreSQL).
-  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers, workers y bases de datos, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10 de EP1 e IE1 a IE19 de EP2), las precisiones de "EP1-aclaraciones.pdf", las clases magistrales D6 ("Git en serio"), D7 ("Docker de verdad y por qué una cola") y D8 ("Compose, ack, durabilidad y fallos"), los laboratorios L4, L6, L6A, L7A y L7 ("Exchanges, bindings y DLQ"), y las respuestas del profesor Umbingelelo en el foro.
+  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers, workers y bases de datos, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10 de EP1 e IE1 a IE19 de EP2), las precisiones de "EP1-aclaraciones.pdf", las clases magistrales D6 ("Git en serio"), D7 ("Docker de verdad y por qué una cola"), D8 ("Compose, ack, durabilidad y fallos") y D9 ("Diagnosticar sin adivinar y clúster RabbitMQ"), los laboratorios L4, L6, L6A, L7A, L7 y LA9 ("Ack, DLQ e idempotencia"), y las resoluciones oficiales del profesor Umbingelelo en el foro y la pauta de EP2.
 ---
 
 # VidalStore EP1 y Unidad 2 — Skill de Aseguramiento de Calidad y Cumplimiento al 100%
@@ -11,17 +11,21 @@ Esta skill actúa como el estándar de control de calidad, auditoría técnica y
 
 Integra las fuentes normativas obligatorias del encargo:
 1. **`EP1-aclaraciones.pdf`**: Documento oficial del profesor Cristian Calderón (`Umbingelelo`), el cual complementa el enunciado y rige sobre él.
-2. **`EP1-Caso-VidalStore.pdf`**: Enunciado de negocio, arquitectura objetivo y rúbrica oficial (indicadores IE1 a IE10).
+2. **`EP1-Caso-VidalStore.pdf`**: Enunciado de negocio, arquitectura objetivo y rúbrica oficial de EP1 (indicadores IE1 a IE10).
 3. **`Pulso.pdf` (L4)**: Guía oficial del Laboratorio L4 ("La cadena completa") y preparación metodológica ("El puente a EP1: tramos 10 al 12") del profesor Cristian Calderón, con las 8 preguntas oficiales de la defensa, pruebas de la cadena y la resolución de la trampa de Cognito.
 4. **`D6-Git-en-serio-y-defender-una-arquitectura.html`**: Clase magistral oficial de Semana 7 sobre entrega técnica, higiene de Git, el reloj de 15 minutos, los 5 flujos de defensa de punta a punta y el método de respuesta en 4 pasos.
 5. **Resoluciones del foro GitHub (`Umbingelelo/DSY1107-Foro-2026-02`)**: Criterios de evaluación, commits estimados, Hosted UI, idempotencia y defensa en profundidad.
-6. **`Plan_VidalStore_EP1.pdf`**: Plan de trabajo específico del grupo (3 integrantes: David, Oscar e Iván).
+6. **`Plan_VidalStore_EP1.pdf` y `ep2-plan-v2.pdf`**: Planes de trabajo grupales (3 integrantes: David, Oscar e Iván).
 7. **`D7-Docker-de-verdad-y-por-que-una-cola.html`**: Clase magistral oficial de Semana 8 sobre contenedores Docker de verdad, receta de diagnóstico en 4 pasos, la trampa del estado `Created`, persistencia con volúmenes con nombre, el Erlang nodename (`--hostname rabbit1`), por qué una cola no acelera el trabajo, criterio sincrónico vs encolado (la regla del botón COMPRAR), y arquitectura de exchanges/bindings.
 8. **`L6.pdf`**: Guía oficial del Laboratorio L6 ("RabbitMQ y tu primer mensaje") con los 5 tramos (broker en contenedor, Postgres y `timestamptz`, worker `biblioteca-eventos`, productor `prestamos.mjs`, exchanges `topic` y `direct`), las 6 pruebas de aislamiento y las 5 respuestas oficiales de Pulso.
 9. **`L6A-L6-RabbitMQ-y-tu-primer-mensaje-con-notas.pdf`**: Clase pre-laboratorio oficial de Semana 8 con notas de orador, las 3 reglas innegociables de mensajería (publica el que escribe, el BFF reenvía pero no publica, ningún nombre suelto en topología), las 6 trampas que cuestan tiempo, la predicción de ruteo y el plan de arranque de la EP2.
 10. **`D8-Compose-ack-durabilidad-y-fallos.html`**: Clase magistral oficial de Semana 9 sobre Docker Compose (sintaxis YAML, variables y redes), confirmación con `ack`, estados del mensaje, las 3 durabilidades indispensables (volumen, cola durable y mensaje persistent), control de concurrencia con `prefetch`, idempotencia y ciclo de vida de fallos hacia DLQ.
 11. **`L7A-L7-Exchanges-bindings-y-DLQ-Clase-pre-laboratorio.html`**: Clase pre-laboratorio de Semana 9 con los 8 contenedores del sistema, orden estricto de topología con DLX/DLQ, error `406 PRECONDITION_FAILED` y su solución, discriminación forense de `x-death`, TypeORM en el worker y matriz de rutas de error.
 12. **`L7.pdf`**: Guía oficial completa de 90 páginas del Laboratorio L7 ("Exchanges, bindings y DLQ") con los 5 tramos (compose con el sistema entero, ack y prefetch, DLX y tres DLQ, TypeORM y 3 tablas en worker, cartas muertas en base y persistencia en microservicio productor con índice parcial), las 4 tablas en 2 esquemas, el puente a la EP2 y la rúbrica oficial completa de indicadores IE1 a IE19.
+13. **`LA9.pdf`**: Guía oficial del Laboratorio de Actividad A9 ("Ack, DLQ e idempotencia, construidos juntos") del profesor Cristian Calderón (Pulso A9), con los tres ejercicios en memoria sin broker (`cola.mjs` demostrando `noAck: false` y entrega *at least once*, `guardar.mjs` demostrando por qué SELECT+INSERT falla por condición de carrera y la restricción UNIQUE `evento_id` con confirmación de error 23505 asegura idempotencia, y `compose.yml` con tres errores de indentación diagnosticados en tres capas con `docker compose config`).
+14. **`D9-Diagnosticar-sin-adivinar-y-cluster-RabbitMQ.html`**: Clase magistral oficial de Semana 10 sobre diagnóstico con método de 4 pasos (síntoma, hipótesis, comando, cambio), lectura de logs y depuración de stack traces (`src/`), resolución de `ECONNREFUSED` al 5432 con `depends_on: { condition: service_healthy }`, persistencia de nodename con `hostname: rabbit1`, reintentos con backoff exponencial y jitter, las cuatro salidas del consumidor (éxito ack, duplicado 23505 ack, transitorio reintento con límite, permanente/veneno nack a DLQ), arquitectura de clúster de dos nodos en RabbitMQ (Erlang cookie compartida, colas clásicas vs Quorum Queues basadas en Raft, regla de mayoría donde 2 nodos toleran 0 caídas), las tres puertas de métricas (UI 15672, CLI `rabbitmqctl`, API HTTP) y políticas de retención con `x-overflow` (`drop-head` vs `reject-publish`).
+15. **`EP2-Caso-VidalStore.pdf`**: Enunciado normativo oficial de 35 páginas de la EP2 ("La tienda que reparte licencias y no logra contar lo que hizo"), que define los indicadores IE1 a IE19, la demostración de 11 pasos en vivo, el orden estricto de prioridades ante falta de tiempo (§7), las 13 preguntas oficiales de defensa (§5.3), y el flujo de reprocesamiento controlado de cartas muertas para grupos de 3 (§4.9).
+16. **`Guia_Conceptos_y_Codigo_VidalStore.pdf`**: Manual técnico integral de arquitectura distribuida para EP2, modelo Zero Trust de `vidalstore-admin`, catálogo de métricas y reproceso con `dlq.reprocesar`.
 
 > [!NOTE]
 > **Estado de las Evaluaciones:**
@@ -160,6 +164,39 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - **Durante el trabajo**: Ejecución estrictamente atómica, validando tests en cada etapa y respetando la prohibición de tocar Git sin autorización explícita previa.
     - **Al terminar (Sincronización de Skill Viva)**: Generación obligatoria de un **Walkthrough de Cierre** e **incorporación inmediata de sus preguntas técnicas y decisiones de arquitectura dentro de la skill** ([references/preguntas_defensa.md](./references/preguntas_defensa.md)). De esta forma, la skill evoluciona incrementalmente con cada commit y el estudiante dispone de un banco de estudio unificado y vivo para su defensa individual de 15 minutos.
     - Plantillas y especificación completa en [references/metodologia_plan_y_walkthrough.md](./references/metodologia_plan_y_walkthrough.md).
+31. **Método de Diagnóstico en 4 Pasos y Lectura de Traza (D9 Slides 5–7)**:
+    - 1. **Síntoma**: Con sus palabras exactas (`connect ECONNREFUSED 172.25.0.2:5432`), nunca «no funciona».
+    - 2. **Hipótesis**: Explicación concreta y falsable («Postgres aún no acepta conexiones porque `initdb` sigue corriendo»).
+    - 3. **Comando**: El comando que la confirma o la descarta (`docker compose ps`). Si descarta, se vuelve al paso 2; jamás se cambia código a ciegas.
+    - 4. **Cambio**: Modificar una sola cosa y verificar si el síntoma cambió.
+    - **Lectura de logs**: De arriba hacia abajo (el primer error es la causa; la última línea es una consecuencia).
+    - **Lectura de stack trace**: Se salta todo lo ajeno (`node:net`, `node_modules/`) y se detiene en la **primera línea de código propio (`src/...`)**.
+32. **Matriz de las Cuatro Salidas del Consumidor (D9 Slides 15–17, LA9 Ejercicio 2, IE5)**:
+    - 1. **Éxito**: `canal.ack(mensaje)` tras persistir con éxito en PostgreSQL.
+    - 2. **Duplicado (SQLSTATE `23505`)**: `canal.ack(mensaje)` + log `WARN`. El evento ya fue guardado en una entrega previa; NO va a la DLQ.
+    - 3. **Error permanente / veneno** (JSON roto, falta `usuarioSub`, error de datos SQL `22...`/`23...`): `canal.nack(mensaje, false, false)` directo a la DLQ. No se reintenta.
+    - 4. **Error transitorio** (Postgres caído, timeout): `conReintentos` con backoff exponencial y jitter (límite fijo de 3); si se agotan, `canal.nack(mensaje, false, false)` a la DLQ.
+    - **Prohibido republicar al exchange**: En `vidalstore.eventos` la auditoría está atada con `#`; republicar generaría duplicaciones en cascada.
+33. **Idempotencia en Persistencia vs Carrera TOCTOU (LA9 Ejercicios 1 y 2)**:
+    - «Reviso y luego inserto» (`SELECT` y luego `INSERT`) falla ante dos llamadas concurrentes (dos réplicas o prefetch > 1) por la ventana de tiempo entre consulta y escritura (vulnerabilidad TOCTOU).
+    - Solo la restricción **`UNIQUE (evento_id)`** en PostgreSQL garantiza atomicidad e idempotencia en un solo paso dentro del motor de base de datos.
+    - El `ack` va siempre después del trabajo: `noAck: false` otorga entrega *at least once*. El costo es posible duplicación, absorbida limpiamente por el índice único.
+34. **Clúster RabbitMQ, Quorum Queues y Quórum Raft (D9 Slides 20–25, IE9, IE10)**:
+    - Clúster de 2 nodos (`rabbit1` en 5672/15672 y `rabbit2` en 5673/15673) compartiendo `RABBITMQ_ERLANG_COOKIE`.
+    - **Las colas clásicas NO se replican**: viven en un solo nodo; los demás solo redirigen.
+    - **Quorum Queues (`x-queue-type: quorum`)**: Colas replicadas basadas en el algoritmo Raft. (`mirrored queues` / `ha-mode` fueron eliminadas en RabbitMQ 4).
+    - **Regla de la mayoría ($\lfloor N/2 \rfloor + 1$)**: Con 2 nodos, la mayoría son 2. **2 nodos soportan 0 caídas**. Si `rabbit2` cae, el clúster entra en estado `minority` y suspende las confirmaciones de escritura. (Para tolerar 1 caída se requieren 3 nodos).
+35. **Políticas de Retención, Limpieza y Estrategias de Desborde (D9 Slides 30–33, IE19)**:
+    - Una cola sin límites satura la RAM del nodo, activando la alarma de memoria de RabbitMQ y bloqueando todas las publicaciones del broker.
+    - Políticas aplicadas con `rabbitmqctl set_policy` sin tocar código ni reiniciar contenedores.
+    - **`drop-head`**: Descarta lo más antiguo en silencio; ideal para la cola de **Avisos** (notificaciones efímeras).
+    - **`reject-publish`**: Rechaza al productor con nack; obligatorio para la cola de **Auditoría** (prueba legal del sistema).
+    - **Trampa en DLQ**: Jamás aplicar `drop-head` o TTL agresivo en DLQ, ya que borraría la evidencia forense de los errores.
+36. **Validación de Sintaxis YAML y Docker Compose en Tres Capas (LA9 Ejercicio 3, IE11)**:
+    - `docker compose config` valida el archivo sin instanciar contenedores ni redes.
+    - 1. *Parser léxico YAML*: Indentación dispar (ojo: conteo base 0 en mensajes `while parsing`).
+    - 2. *Constructor semántico YAML*: Claves hermanas anidadas por exceso de espacios (ej. `rabbit1:` con 4 espacios dentro de `postgres:`).
+    - 3. *Validador de Compose*: Estructura YAML válida que viola el esquema de Compose (ej. `name:` interpretado como un nuevo volumen en vez de atributo).
 
 ---
 
@@ -315,17 +352,27 @@ Comprobar los 5 hitos fundamentales de la Semana 9:
 5. **`password authentication failed`**: La contraseña del `.env` no coincide con el volumen inicializado -> Usar la clave original o reiniciar con `down -v`.
 6. **`canal: JSON.parse` cierra el canal**: Consumidor sin `try/catch` intentó parsear dato corrupto -> Envolver en `try/catch` y rechazar con `nack(false, false)`.
 
+### Paso 9: Puntos de Control y Diagnóstico de D9 y LA9 (Clúster, Idempotencia y Políticas)
+1. **Validación de YAML sin levantar**: Ejecutar `docker compose config`. Debe retornar la configuración normalizada limpia con `volumes:` declarados correctamente sin errores léxicos, constructivos ni de esquema.
+2. **Healthcheck y Arranque Seguro**: Ejecutar `docker compose up -d --wait`. Verificar que la terminal retorne solo cuando `postgres`, `rabbit1` y `rabbit2` reporten estado `healthy`.
+3. **Persistencia de Nodename**: Ejecutar `docker exec rabbit1 rabbitmqctl eval 'node().'` -> debe responder estrictamente `rabbit@rabbit1`.
+4. **Clúster de 2 Nodos**: Ejecutar `docker exec rabbit1 rabbitmqctl cluster_status`. Debe listar `rabbit@rabbit1` y `rabbit@rabbit2` bajo `Running Nodes`.
+5. **Comprobación de Idempotencia**: Enviar dos veces el mismo evento con idéntico `x-evento-id` -> El primer insert responde éxito; la segunda reentrega arroja SQLSTATE `23505` en Postgres, el consumidor atrapa el error, emite log `WARN` y confirma con `canal.ack(mensaje)`, manteniendo exactamente 1 fila en `eventos_auditoria`.
+6. **Comprobación de DLQ ante Veneno**: Enviar mensaje con sintaxis inválida o sin `usuarioSub` -> El consumidor emite `canal.nack(mensaje, false, false)` sin reintentos, el mensaje aterriza en la DLQ correspondiente y `CartasMuertasConsumidor` lo persiste en `mensajes_muertos` con `payload text`.
+7. **Políticas de Retención**: Comprobar con `docker exec rabbit1 rabbitmqctl list_policies` que las políticas de `max-length` y `overflow` estén aplicadas para `avisos` (`drop-head`) y `auditoria` (`reject-publish`).
+
 ---
 
 ## 5. Guías de Referencia Detalladas
 
 Para profundizar en áreas específicas del encargo, consultar los siguientes documentos de referencia adjuntos:
+- [Guía Técnica de Diagnóstico, Idempotencia, Clúster RabbitMQ y Políticas (D9 y LA9)](./references/diagnostico_cluster_idempotencia_d9_la9.md): Método de diagnóstico en 4 pasos, lectura de stack traces (`src/`), Quorum Queues con Raft, regla de mayoría de 2 nodos, políticas de retención (`drop-head` vs `reject-publish`), y las 3 capas de error de Compose.
 - [Guía Técnica de Compose, DLQ y Persistencia (D8, L7A y L7)](./references/mensajeria_compose_dlq_persistencia_l7.md): Orquestación multi-contenedor, durabilidades, prefetch(1), topología con DLX/DLQ, idempotencia con UNIQUE, TypeORM, CartasMuertasConsumidor y mapeo Biblioteca vs VidalStore.
 - [Guía Técnica de Mensajería, Docker y RabbitMQ (D7, L6 y L6A)](./references/mensajeria_docker_rabbitmq_l6.md): Dos vías del sistema, topología AMQP, Docker de verdad, `ack` explícito, `timestamptz` y transición a EP2.
-- [Rúbrica Oficial Detallada (IE1 a IE19)](./references/rubrica_completa.md): Ponderaciones de EP1 (40%) y EP2 (40% encargo grupal IE1 a IE8 + 60% defensa individual IE9 a IE19).
+- [Rúbrica Oficial Detallada (IE1 a IE19)](./references/rubrica_completa.md): Ponderaciones de EP1 (40%) y EP2 (40% encargo grupal IE1 a IE8 + 60% defensa individual IE9 a IE19), con el orden oficial de demostración de 11 pasos y prioridades de tiempo.
 - [Arquitectura de 4 Capas y Códigos HTTP](./references/arquitectura_4_capas.md): Responsabilidad de cada componente, CORS, flujo de petición de arriba a abajo y distinción Cloud vs Local.
 - [Configuración de Cognito y Seguridad](./references/cognito_y_seguridad.md): User Pool, Resource Server, grupos, scopes, App Clients, auto-registro y Lambda trigger.
-- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas de `Pulso.pdf` §12.2 + 10 preguntas de D7/L6/L6A + Guion oficial de D6 + 15 preguntas oficiales de D8, L7A y L7 (Bloque F).
+- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas de `Pulso.pdf` §12.2 + 10 preguntas de D7/L6/L6A + Guion oficial de D6 + 15 preguntas oficiales de D8, L7A y L7 (Bloque F) + 10 preguntas del Administrador (Bloque G) + 14 preguntas de D9/LA9 (Bloque H) + 13 preguntas oficiales del enunciado EP2 §5.3 (Bloque I).
 - [Metodología de Plan de Implementación y Walkthrough](./references/metodologia_plan_y_walkthrough.md): Plantillas estándar obligatorias para la planificación interactiva previa y el informe de walkthrough posterior con evidencias de pruebas y guión de defensa.
 
 ---
