@@ -200,6 +200,35 @@ Este documento consolida:
 
 ---
 
+### G.11. ¿Cómo opera el CRUD dinámico de topología (colas, exchanges, bindings) sobre la RabbitMQ Management HTTP API y cómo maneja las respuestas vacías (204 No Content)? (IE17)
+* **Respuesta Técnica**:
+  > "1. **Qué hice**: Implementé en `RabbitAdminService` los métodos `crearCola`, `eliminarCola`, `crearExchange`, `eliminarExchange`, `crearBinding` y `eliminarBinding` contra la HTTP API de RabbitMQ (`http://localhost:15672/api/...`) utilizando `fetch` nativo con autenticación Basic (`guest:guest`) y DTOs validados con `class-validator` (`CrearColaDto`, `CrearExchangeDto`, `CrearBindingDto`, `EliminarBindingDto`).
+  > 2. **Qué problema resuelve**: Permite crear y desmantelar recursos de mensajería en caliente desde la API administrativa sin reiniciar contenedores ni depender de la UI manual de RabbitMQ.
+  > 3. **El desafío del 204 No Content**: Las eliminaciones (`DELETE /api/queues/%2f/<name>`) y declaraciones en RabbitMQ responden con código `204 No Content` o `201 Created` con body vacío. Si se invoca directamente `response.json()`, Node.js lanza `SyntaxError: Unexpected end of JSON input`. En `request()`, validamos si `response.status === 204` o si `response.text()` está vacío antes de parsear, retornando un DTO unificado `{ success: true, message: '...', recurso, tipo }`.
+  > 4. **Qué descarté**: Descarté ejecutar comandos CLI por `child_process.exec('rabbitmqctl')` porque acoplaría el proceso de Node.js al sistema operativo del host y no funcionaría en despliegues distribuidos en contenedores.
+  > 5. **Cómo lo compruebo**: Con `curl -X POST /v1/admin/queues -d '{"nombre":"q.demo","durable":true}'` recibo `201 Created`, y de inmediato `GET /v1/admin/queues` muestra la cola creada en vivo."
+
+---
+
+### G.12. ¿Por qué `vidalstore-admin` aplica el modelo Zero Trust con `RolesGuard` y qué diferencia semántica existe entre 401 y 403? (IE6, IE7, IE8)
+* **Respuesta Técnica**:
+  > "1. **Qué hice**: Apliqué a nivel de clase en `AdminController` la combinación `@UseGuards(AuthGuard, RolesGuard)` y el decorador `@Roles('ADMIN', 'administradores')`.
+  > 2. **Qué problema resuelve**: Al correr en el puerto `:3020` fuera del perímetro del API Gateway, `vidalstore-admin` no puede asumir que quien conecta es confiable. Protege absolutamente todos los endpoints (tanto operaciones destructivas `POST/DELETE` como lecturas de métricas `GET /queues`, `/cluster`, etc.) impidiendo que usuarios autenticados sin privilegios vean la topología interna.
+  > 3. **Diferencia Semántica Rigurosa**:
+  >    - **`401 Unauthorized` (Autenticación)**: El token Bearer está ausente, malformado o su firma criptográfica no valida contra el JWKS de Cognito. Significa: *«No sé quién eres»*.
+  >    - **`403 Forbidden` (Autorización)**: El token es 100% válido y emitido por Cognito, pero el usuario pertenece a `jugadores` o carece de grupos administrativos. Significa: *«Sé quién eres, pero tu rol no te autoriza a administrar la plataforma»*.
+  > 4. **Qué descarté**: Descarté proteger solo los endpoints de escritura (`POST`, `DELETE`) dejando los `GET` desprotegidos; el modelo Zero Trust y la rúbrica exigen que un jugador común no pueda inspeccionar colas ni mensajes muertos."
+
+---
+
+### G.13. ¿Por qué `RolesGuard` realiza matching case-insensitive y cómo aborda la «trampa de Cognito» en el backend administrativo? (IE6, IE8)
+* **Respuesta Técnica**:
+  > "1. **Qué hice**: En `RolesGuard`, extraigo `request.user.groups` (o `request.user['cognito:groups']`), normalizo todos los nombres de grupo con `.toLowerCase()` y comparo con los roles requeridos normalizados.
+  > 2. **Qué problema resuelve**: En la especificación oficial conviven diferentes convenciones: la rúbrica pide el grupo en español `administradores`, los ejemplos del laboratorio usan `ADMIN` en mayúsculas, y en la consola de AWS Cognito puede crearse con mayúscula inicial `Administradores`. La comparación insensible a mayúsculas evita rechazos accidentales por discrepancia de capitalización.
+  > 3. **Resolución de la trampa de Cognito**: Si un usuario se auto-registró por la Hosted UI, Cognito emite un JWT sin el claim `cognito:groups`. En `RolesGuard`, el arreglo de grupos evalúa como vacío (`[]`), la condición `hasRequiredRole` resulta `false` y arroja de inmediato `ForbiddenException('Acceso denegado: se requiere rol de administrador')` (HTTP 403), asegurando que ninguna cuenta pública pueda acceder a la infraestructura."
+
+---
+
 ## Bloque H: Diagnóstico, Idempotencia, Clúster y Políticas (D9 y LA9)
 
 ### H.1. ¿Por qué el `ack` va después del trabajo y no antes? (LA9 Ejercicio 1 / Pulso A9)
@@ -387,5 +416,154 @@ Este documento consolida:
 ### I.13. ¿De dónde salieron los juegos del catálogo en una máquina recién clonada?
 * **Respuesta Técnica**:
   > "Salieron del archivo versionado `data/catalogo.json`, el cual fue generado por el script `data/seed.ts` (o `.js`) que consumió una API externa real (ej. CheapShark / FreeToGame). En una máquina recién clonada, el catálogo está poblado de inmediato desde el repositorio sin necesidad de inicializar bases de datos externas para esa lectura."
+
+---
+
+## Bloque J: Preguntas Oficiales de L8 y L8A (Clúster RabbitMQ, Quorum Queues, Microservicio Administrador, Métricas y Políticas)
+
+### J.1. ¿Dos contenedores de RabbitMQ levantados con Docker Compose ya forman un clúster? ¿Qué rol cumple la cookie de Erlang?
+* **Respuesta Técnica**:
+  > "No. Dos contenedores de RabbitMQ levantados en la misma máquina son simplemente dos brokers completamente aislados que no comparten usuarios, exchanges ni colas.  
+  > Para que formen un clúster, deben compartir la misma **cookie de Erlang** (`RABBITMQ_ERLANG_COOKIE`), que actúa como el secreto compartido que permite a las máquinas virtuales de Erlang comunicarse por red. La cookie autentica conversaciones entre nodos, pero **no cifra ni firma los datos del disco**. Además, los nodos deben descubrirse mutuamente a través de `cluster.conf` mediante `cluster_formation.peer_discovery_backend = rabbit_peer_discovery_classic_config`."
+
+---
+
+### J.2. ¿Por qué `rabbit2` no debe llevar `depends_on: { rabbit1: { condition: service_healthy } }` en el `compose.yml`?
+* **Respuesta Técnica**:
+  > "Porque introduce una trampa de bloqueo mutuo (*deadlock*): si en un reinicio `rabbit1` necesita contactar a `rabbit2` para reconciliar metadatos antes de responder a su propio healthcheck, `rabbit2` jamás arrancaría porque Compose espera que `rabbit1` pase a `healthy`.  
+  > Además, si `rabbit1` se recrea por cambio de volumen o imagen, Compose cancelaría el arranque de `rabbit2` con el error `dependency failed to start: container rabbit1 is unhealthy`. Al no llevar `depends_on`, ambos arrancan en paralelo y el mecanismo `cluster.conf` gestiona el emparejamiento de forma autónoma."
+
+---
+
+### J.3. En `rabbitmqctl cluster_status`, ¿cuál es la diferencia entre `Disk Nodes` y `Running Nodes` al detener `rabbit2`?
+* **Respuesta Técnica**:
+  > "* **`Disk Nodes`**: Muestra los nodos cuya membresía en el clúster está grabada en el almacenamiento persistente (`Mnesia`). Al apagar `rabbit2`, **ambos nodos siguen figurando** en `Disk Nodes` porque el clúster no olvida la unión.  
+  > * **`Running Nodes`**: Muestra únicamente los nodos que están encendidos, activos y respondiendo en el instante actual. Al apagar `rabbit2`, solo queda `rabbit@rabbit1`.  
+  > Cuando `rabbit2` vuelve a encenderse (`docker compose start rabbit2`), reingresa a `Running Nodes` automáticamente **sin necesidad de repetir ningún comando `join_cluster` manual**."
+
+---
+
+### J.4. Si un nodo arranca desincronizado y no forma clúster, ¿cuál es el procedimiento de rescate a mano y por qué jamás se debe ejecutar `reset` sobre `rabbit1`?
+* **Respuesta Técnica**:
+  > "Se rescata ejecutando los 4 comandos estrictamente sobre **`rabbit2`**:
+  > 1. `docker compose exec rabbit2 rabbitmqctl stop_app` (detiene el broker sin matar Erlang).
+  > 2. `docker compose exec rabbit2 rabbitmqctl reset` (borra los datos y metadatos locales de `rabbit2`).
+  > 3. `docker compose exec rabbit2 rabbitmqctl join_cluster rabbit@rabbit1` (adopta los metadatos de `rabbit1`).
+  > 4. `docker compose exec rabbit2 rabbitmqctl start_app` (arranca como miembro del clúster).  
+  > **Jamás ejecutar `reset` sobre `rabbit1`** porque borraría de inmediato la base de datos de metadatos principal, destruyendo todas las colas, exchanges, bindings y usuarios configurados en el sistema."
+
+---
+
+### J.5. ¿Por qué en RabbitMQ 4 ya no se usan colas espejo (`ha-mode: all`) y qué es una Quorum Queue?
+* **Respuesta Técnica**:
+  > "Las colas espejo (*mirrored queues*) basadas en `ha-mode` presentaban problemas graves de consistencia y sincronización ante particiones de red, y fueron **formalmente eliminadas en RabbitMQ 4.0**.  
+  > Su reemplazo moderno y obligatorio son las **Quorum Queues** (`x-queue-type: quorum`), basadas en el algoritmo de consenso distribuido **Raft**. Cada cola quorum tiene un nodo **Leader** (que procesa escrituras) y nodos **Followers** (que replican el log Raft). Si el líder cae, los seguidores eligen un nuevo líder inmediatamente si cuentan con la mayoría de réplicas vivas."
+
+---
+
+### J.6. ¿Por qué al apagar `rabbit2` la API HTTP muestra `state: minority` mientras que `rabbitmqctl list_queues state` sigue diciendo `running`?
+* **Respuesta Técnica**:
+  > "Porque responden preguntas distintas:
+  > * `rabbitmqctl list_queues state`: Evalúa si el proceso local de Erlang de la cola está vivo y corriendo en ese nodo particular (`rabbit1`). Como `rabbit1` está encendido, responde `running`.  
+  > * `/api/queues state`: Evalúa el **estado de consenso Raft del clúster**. Con 2 réplicas y 1 nodo apagado, la cola solo tiene 1 réplica viva, por lo que carece de mayoría estricta y se encuentra en estado **`minority`**.  
+  > Esto demuestra el principio de D9: la herramienta que eliges determina la respuesta que ves; para diagnosticar salud de clúster se debe consultar la Management API."
+
+---
+
+### J.7. ¿Por qué `canal.sendToQueue(...)` devuelve `true` cuando una cola quorum está en `minority`, y por qué eso no garantiza que el mensaje fue guardado?
+* **Respuesta Técnica**:
+  > "Porque `sendToQueue` a secas opera de forma asíncrona a nivel de transporte: el retorno `true` solo significa que la librería de Node.js logró empujar los bytes al **buffer del socket TCP local**, no que RabbitMQ los persistió.  
+  > Como la cola está en `minority`, el líder Raft no puede confirmar la escritura con la mayoría de réplicas. El mensaje queda flotando y no entra a la cola. Para tener certeza real de guardado se debe utilizar un **canal con confirmaciones (`confirmChannel`)**, donde el broker responde con un *publisher confirm*; en estado `minority`, ese canal lanzará un error de timeout (`confirm_timeout`)."
+
+---
+
+### J.8. ¿Cuál es la fórmula de mayoría de Raft ($\lfloor N/2 \rfloor + 1$) y cuántas caídas tolera un clúster de dos nodos?
+* **Respuesta Técnica**:
+  > "Raft exige la mayoría estricta de réplicas: $\text{Mayoría} = \lfloor N/2 \rfloor + 1$.  
+  > * Con $N = 1$: mayoría = 1, tolera 0 caídas.  
+  > * Con $N = 2$: mayoría = $\lfloor 2/2 \rfloor + 1 = 2$. **Tolera 0 caídas**. Perder 1 nodo es perder la mayoría.  
+  > * Con $N = 3$: mayoría = $\lfloor 3/2 \rfloor + 1 = 2$. **Tolera 1 caída** (quedan 2 vivos).  
+  > Por ende, un clúster de dos nodos **tolera cero caídas** para confirmar escrituras en colas quorum."
+
+---
+
+### J.9. Si un clúster de 2 nodos tolera cero caídas, ¿para qué sirve tener dos nodos y por qué la pauta pide dos nodos? (Pregunta Clave de Defensa)
+* **Respuesta Técnica**:
+  > "Un clúster de dos nodos me otorga **durabilidad distribuida y recuperación automática**, no alta disponibilidad:  
+  > 1. **Cero pérdida de datos**: Cada mensaje confirmado reside físicamente en dos volúmenes de disco independientes. Si un nodo sufre un daño irreparable, los datos sobreviven íntegros en el otro.  
+  > 2. **Recuperación automática sin intervención**: Cuando el nodo caído se enciende, el protocolo Raft lo resincroniza solo y el clúster vuelve a `running` sin necesidad de comandos manuales.  
+  > 3. **Arquitectura lista para escalar**: La topología y el `cluster.conf` ya están implementados. Escalar a alta disponibilidad real solo requiere agregar `rabbit3` al `compose.yml`, ya que la tolerancia a fallos en consenso distribuido empieza estrictamente con un número impar de 3 nodos."
+
+---
+
+### J.10. ¿Qué verifica el comando `rabbitmq-diagnostics check_if_node_is_quorum_critical` y por qué termina con código de salida 69?
+* **Respuesta Técnica**:
+  > "Verifica de forma preventiva si la detención del nodo actual provocaría que alguna cola quorum o grupo de metadatos pierda su quórum de mayoría.  
+  > En un clúster de 2 nodos, lista todas las colas de trabajo, las 3 DLQ y `rabbitmq_metadata`, indicando que todas quedarán *unavailable* si `rabbit1` se detiene. Finaliza con código de error **69** a propósito porque actúa como sonda de diagnóstico de infraestructura para alertar a monitores automatizados de que el nodo es un punto único de falla para el quórum."
+
+---
+
+### J.11. ¿Por qué el `RabbitAdminService` abre una sola conexión TCP pero abre un canal AMQP nuevo por cada operación?
+* **Respuesta Técnica**:
+  > "Abrir una conexión TCP AMQP es costoso en CPU y latencia (apretón de manos de red, autenticación, negociación de heartbeats); por eso se mantiene una sola conexión persistente abierta al arrancar el servicio.  
+  > Los canales AMQP, en cambio, son multiplexaciones lógicas ligeras sobre ese mismo socket. Se abre un canal por operación porque **cuando RabbitMQ rechaza un comando (ej. cola inexistente o argumentos inválidos), cierra el canal AMQP entero**. Si el canal fuera compartido entre todas las peticiones, el error de un cliente destruiría las transacciones en vuelo de todos los demás. Además, se registra `canal.on('error', () => undefined)` para que el cierre del canal no tumbe el proceso de Node.js."
+
+---
+
+### J.12. En el microservicio administrador, ¿cómo mapea el método `traducir()` los errores nativos de AMQP a códigos HTTP REST?
+* **Respuesta Técnica**:
+  > "Mapea las excepciones de `amqplib` a excepciones semánticas de NestJS:  
+  > * Mensajes con `NOT_FOUND` (ej. crear binding sobre una cola que no existe) $\rightarrow$ **`404 Not Found`**.  
+  > * Mensajes con `PRECONDITION_FAILED` (ej. redeclarar una cola quorum existente como classic) $\rightarrow$ **`409 Conflict`**.  
+  > * Caída del broker, timeouts o clúster sin quórum Raft $\rightarrow$ **`503 Service Unavailable`**.  
+  > Esto evita arrojar errores 500 ciegos, entregando al cliente el código de estado HTTP exacto según la especificación REST."
+
+---
+
+### J.13. ¿Cuáles son las tres opciones críticas de `ValidationPipe` en el microservicio administrador y por qué `forbidNonWhitelisted: true` es indispensable?
+* **Respuesta Técnica**:
+  > "Las tres opciones en `main.ts` son:
+  > 1. `whitelist: true`: Descarta automáticamente cualquier propiedad del JSON que no esté declarada en el DTO.  
+  > 2. `forbidNonWhitelisted: true`: En lugar de descartar en silencio, **rechaza de inmediato con `400 Bad Request`** si el cliente envía campos desconocidos. Es indispensable porque previene que un usuario envíe propiedades erróneas (ej. escribir `nombres` en vez de `nombre`) creyendo falsamente que fueron configuradas.  
+  > 3. `transform: true`: Instancia formalmente la clase del DTO con los tipos correctos para que `class-validator` ejecute sus decoradores."
+
+---
+
+### J.14. Si mañana observas que `messages_ready` sube sin parar y `consumers` está en 0, ¿qué diagnóstico haces y qué solución aplicas? ¿Por qué reiniciar RabbitMQ o purgar la cola es un error grave?
+* **Respuesta Técnica**:
+  > "* **Diagnóstico**: Los productores siguen publicando eventos normalmente pero el microservicio consumidor (`vidalstore-eventos`) está caído o desconectado.  
+  > * **Solución**: Revisar los logs del worker (`docker compose logs eventos`), subsanar la causa del fallo y encenderlo (`docker compose start eventos`).  
+  > * **Por qué no reiniciar RabbitMQ**: Porque el broker está funcionando a la perfección cumpliendo su rol de resguardo duradero. Reiniciarlo interrumpe el tráfico de los demás microservicios sin resolver la falta de consumidores.  
+  > * **Por qué no purgar la cola**: Porque purgar eliminaría irreversiblemente compras y eventos legítimos de los usuarios para tapar un síntoma operativo."
+
+---
+
+### J.15. Si observas que `messages_unacknowledged` permanece congelado en el valor de tu `prefetch` (ej. 1) con 1 consumidor activo, ¿qué ocurrió y cómo se resuelve?
+* **Respuesta Técnica**:
+  > "* **Causa**: El consumidor recibió el mensaje pero **no ha enviado el `ack`**. Esto ocurre si el worker quedó bloqueado esperando una respuesta sincrónica sin timeout (ej. Postgres no responde), o si el código del consumidor sufrió un error lógico y no atrapó la excepción en un bloque `catch` para enviar `nack`. Como el `prefetch` es 1, RabbitMQ no le entrega ningún mensaje más hasta que confirme el actual.  
+  > * **Solución**: Depurar el código del worker, configurar timeouts en los clientes de base de datos y asegurar que todo camino de error termine explícitamente en `ack` (idempotencia) o `nack` hacia la DLQ."
+
+---
+
+### J.16. ¿Por qué una cola sin límite puede llevarse por delante al sistema entero, y qué diferencia práctica existe entre `overflow: drop-head` y `overflow: reject-publish` en una cola quorum?
+* **Respuesta Técnica**:
+  > "Si una cola crece sin límite (ej. la DLQ acumulando mensajes con Postgres caído), satura la memoria o el disco del nodo. Al alcanzar el umbral, RabbitMQ levanta una **alarma de disco o memoria y bloquea todas las publicaciones en todo el broker**, deteniendo compras y catálogos de todo VidalStore.  
+  > * **`drop-head`**: Descarta el mensaje más viejo para hacerle espacio al nuevo; el productor recibe confirmación normal y no se entera. Se usa en **Avisos** (`notificaciones`) donde lo reciente importa más que lo histórico.  
+  > * **`reject-publish`**: Rechaza el mensaje entrante con un nack al productor. Se usa en **Auditoría** (`auditoria`) y transacciones donde ninguna pérdida silenciosa es admisible."
+
+---
+
+### J.17. ¿Por qué el tiempo de caducidad `message-ttl` no elimina los mensajes viejos que ya estaban en la cola antes de aplicar la política?
+* **Respuesta Técnica**:
+  > "Porque en RabbitMQ el temporizador de caducidad se calcula y asigna individualmente a cada mensaje **en el momento exacto en que ingresa a la cola**. Si una cola ya tiene mensajes previos y se le aplica una política con `message-ttl`, dichos mensajes no poseen la marca de tiempo calculada y **no caducan retroactivamente**. Solo comenzarán a caducar los mensajes que ingresen después de que la política esté activa."
+
+---
+
+### J.18. En la cola DLQ (`.dlq`), ¿cuáles son los dos argumentos técnicos para elegir entre `reject-publish` y `drop-head`, y cómo defiendes tu elección?
+* **Respuesta Técnica**:
+  > "* **A favor de `reject-publish`**: Si una DLQ alcanza los 1000 mensajes, el sistema lleva horas fallando. El problema no es dónde guardar el mensaje 1001, sino que el fallo se haga visible ruidosamente en los productores y en las alarmas de monitoreo para exigir intervención inmediata, en vez de continuar tragando basura en silencio.  
+  > * **A favor de `drop-head`**: Prefiere conservar siempre los 1000 mensajes más recientes descartando los antiguos, garantizando que el equipo forense disponga de los errores frescos para depurar y reproducir la causa raíz.  
+  > Ambas son técnicamente válidas; en VidalStore defendemos `reject-publish` en la DLQ para aplicar el principio de *Fail-Fast* y proteger la consistencia global del clúster."
+
 
 

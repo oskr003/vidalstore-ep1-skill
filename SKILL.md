@@ -2,7 +2,7 @@
 name: vidalstore-ep1
 description: >-
   Auditoría, verificación estricta y preparación técnica integral para DSY1107 - Desarrollo Cloud Native I (DUOC UC), cubriendo la Evaluación Parcial N°1 (EP1 - Caso VidalStore) y la Unidad 2 / EP2 (Mensajería Asíncrona, RabbitMQ, Docker Compose, DLQ y Persistencia Relacional con PostgreSQL).
-  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers, workers y bases de datos, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10 de EP1 e IE1 a IE19 de EP2), las precisiones de "EP1-aclaraciones.pdf", las clases magistrales D6 ("Git en serio"), D7 ("Docker de verdad y por qué una cola"), D8 ("Compose, ack, durabilidad y fallos") y D9 ("Diagnosticar sin adivinar y clúster RabbitMQ"), los laboratorios L4, L6, L6A, L7A, L7 y LA9 ("Ack, DLQ e idempotencia"), y las resoluciones oficiales del profesor Umbingelelo en el foro y la pauta de EP2.
+  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers, workers y bases de datos, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10 de EP1 e IE1 a IE19 de EP2), las precisiones de "EP1-aclaraciones.pdf", las clases magistrales D6 ("Git en serio"), D7 ("Docker de verdad y por qué una cola"), D8 ("Compose, ack, durabilidad y fallos") y D9 ("Diagnosticar sin adivinar y clúster RabbitMQ"), los laboratorios L4, L6, L6A, L7A, L7, LA9 ("Ack, DLQ e idempotencia"), L8 ("Clúster y microservicio administrador") y L8A (Clase pre-laboratorio con simulación de mayoría y políticas), y las resoluciones oficiales del profesor Umbingelelo en el foro y la pauta de EP2.
 ---
 
 # VidalStore EP1 y Unidad 2 — Skill de Aseguramiento de Calidad y Cumplimiento al 100%
@@ -26,16 +26,18 @@ Integra las fuentes normativas obligatorias del encargo:
 14. **`D9-Diagnosticar-sin-adivinar-y-cluster-RabbitMQ.html`**: Clase magistral oficial de Semana 10 sobre diagnóstico con método de 4 pasos (síntoma, hipótesis, comando, cambio), lectura de logs y depuración de stack traces (`src/`), resolución de `ECONNREFUSED` al 5432 con `depends_on: { condition: service_healthy }`, persistencia de nodename con `hostname: rabbit1`, reintentos con backoff exponencial y jitter, las cuatro salidas del consumidor (éxito ack, duplicado 23505 ack, transitorio reintento con límite, permanente/veneno nack a DLQ), arquitectura de clúster de dos nodos en RabbitMQ (Erlang cookie compartida, colas clásicas vs Quorum Queues basadas en Raft, regla de mayoría donde 2 nodos toleran 0 caídas), las tres puertas de métricas (UI 15672, CLI `rabbitmqctl`, API HTTP) y políticas de retención con `x-overflow` (`drop-head` vs `reject-publish`).
 15. **`EP2-Caso-VidalStore.pdf`**: Enunciado normativo oficial de 35 páginas de la EP2 ("La tienda que reparte licencias y no logra contar lo que hizo"), que define los indicadores IE1 a IE19, la demostración de 11 pasos en vivo, el orden estricto de prioridades ante falta de tiempo (§7), las 13 preguntas oficiales de defensa (§5.3), y el flujo de reprocesamiento controlado de cartas muertas para grupos de 3 (§4.9).
 16. **`Guia_Conceptos_y_Codigo_VidalStore.pdf`**: Manual técnico integral de arquitectura distribuida para EP2, modelo Zero Trust de `vidalstore-admin`, catálogo de métricas y reproceso con `dlq.reprocesar`.
+17. **`L8A-L8-Cluster-y-microservicio-administrador-Clase-pre-laboratorio.html`**: Clase pre-laboratorio oficial de Semana 10 sobre clúster de dos nodos en Compose, cookie de Erlang, Quorum Queues basadas en Raft, la cuenta de la mayoría ($\lfloor N/2 \rfloor + 1$) y por qué 2 nodos toleran 0 caídas, el microservicio administrador (recorrido de petición, DTOs y `RabbitAdminService`), las seis métricas clave y decisiones operativas, y políticas de retención con desborde (`drop-head` vs `reject-publish`).
+18. **`L8.pdf`**: Guía oficial completa de 57 páginas del Laboratorio L8 ("Clúster y microservicio administrador") de Pulso con los 5 tramos (clúster en compose, quorum queues, `biblioteca-admin` en NestJS con DTOs y validación, métricas del broker y políticas de retención versionadas en `politicas.json`), las 4 cajas de Pulso, la Evaluación Formativa 2 (indicador del 17%), la tabla de 25+ errores frecuentes y el puente a la EP2.
 
 > [!NOTE]
 > **Estado de las Evaluaciones:**
 > * **EP1 (Cadena Sincrónica de 4 Capas)**: **ENTREGADA Y CERRADA**. Los requisitos de código, commits y proxies quedaron congelados y aprobados.
 > * **EP2 (Mensajería Asíncrona, RabbitMQ, Docker y Microservicios)**: **FASE ACTIVA (Semanas 8 a 10)**.
 >   * Ponderación: 40% Encargo Grupal (IE1 a IE8) + 60% Presentación Individual (IE9 a IE19).
->   * **Distribución Oficial del Grupo (ep2-plan-v2.pdf)**:
->     * **David**: Dueño de `vidalstore-plataforma` (IE2, IE9, IE10, IE11, IE14, IE19). Clúster RabbitMQ 2 nodos, Postgres 18, `compose.yml`, `shared/topologia.ts`, políticas y documentación de repositorio.
->     * **Iván**: Dueño de `vidalstore-eventos` y frontend (IE3, IE4, IE5, IE12, IE13, IE15, IE16). Consumidores (`AvisosConsumer`, `AuditoriaConsumer`, `CorreosConsumer`, `DlqConsumer`), persistencia en Postgres y demo veneno.
->     * **Oscar**: Dueño de `vidalstore-admin` (IE6, IE7, IE8, IE17, IE18). Productor de eventos, `RabbitAdminService`, 8 endpoints de gestión/métricas, y reproceso de DLQ para grupos de 3.
+>   * **Distribución Oficial del Grupo (repositorios.md y ep2-plan-v2.pdf)**:
+>     * **David**: Dueño de `vidalstore-plataforma` (IE2, IE9, IE10, IE11, IE14, IE19; clúster RabbitMQ 2 nodos, Postgres 18, topología centralizada y políticas) y `vidalstore-gateway` (perímetro de seguridad, validación JWT y scopes).
+>     * **Iván**: Dueño de `vidalstore-eventos` (IE3, IE4, IE5, IE12, IE13, IE15, IE16; consumidores `Avisos`, `Auditoria`, `Correos`, `DLQ`, TypeORM e idempotencia) y `vidalstore-frontend` (SPA Angular, login Cognito Hosted UI con Amplify).
+>     * **Oscar**: Dueño de `vidalstore-admin` (IE6, IE7, IE8, IE17, IE18; observabilidad de clúster, CRUD de topología, gestión de DLQ y reprocesamiento) y `vidalstore-backend` (BFF agregador, microservicios de dominio y productor AMQP de licencias con persistencia relacional PostgreSQL 18 según Regla L6A para IE15).
 
 ---
 
@@ -197,6 +199,43 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - 1. *Parser léxico YAML*: Indentación dispar (ojo: conteo base 0 en mensajes `while parsing`).
     - 2. *Constructor semántico YAML*: Claves hermanas anidadas por exceso de espacios (ej. `rabbit1:` con 4 espacios dentro de `postgres:`).
     - 3. *Validador de Compose*: Estructura YAML válida que viola el esquema de Compose (ej. `name:` interpretado como un nuevo volumen en vez de atributo).
+37. **Clúster de Dos Nodos y Autodescubrimiento con `cluster.conf` (L8 Tramo 1, IE9, IE10, IE11)**:
+    - Dos nodos `rabbit1` y `rabbit2` compartiendo `RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_COOKIE}`.
+    - Descubrimiento automático con `cluster.conf` montado en `/etc/rabbitmq/conf.d/20-cluster.conf:ro`.
+    - **Prohibido `depends_on: { rabbit1: { condition: service_healthy } }` en `rabbit2`**: evita *deadlocks* en reinicios y fallas por recreación (`container rabbit1 is unhealthy`). Ambos arrancan en paralelo.
+    - Procedimiento de rescate a mano con los 4 comandos estrictamente en `rabbit2` (`stop_app` -> `reset` -> `join_cluster rabbit@rabbit1` -> `start_app`). **Prohibido `reset` en `rabbit1`** (borra la base Mnesia y todas las colas de L7).
+    - `cluster_status`: al apagar `rabbit2`, ambos permanecen en `Disk Nodes` y solo `rabbit1` en `Running Nodes`. Al reencenderlo vuelve solo sin repetir ningún `join_cluster`.
+38. **Quorum Queues, Consenso Raft y la Cuenta de la Mayoría (L8 Tramo 2, IE10, IE12, IE13)**:
+    - Argumento `'x-queue-type': 'quorum'` obligatorio en todas las colas de trabajo y las 3 DLQ. Las colas espejo (`ha-mode: all`) fueron **eliminadas en RabbitMQ 4.0**.
+    - Mayoría Raft estricta $\lfloor N/2 \rfloor + 1$. Con 2 nodos la mayoría es 2; **2 nodos toleran 0 caídas**.
+    - Al apagar `rabbit2`, `/api/queues` muestra `state: minority`. `rabbitmqctl list_queues state` sigue diciendo `running` porque mide el proceso local de Erlang en `rabbit1`, no la mayoría Raft.
+    - `sendToQueue` a secas engaña con `true` (solo buffer del socket TCP local). Se exigen canales confirmados (`publisher-confirms`) que lanzan `confirm_timeout`.
+    - **Argumento de defensa**: 2 nodos dan durabilidad física en 2 volúmenes y recuperación automática sin intervención, no alta disponibilidad (la alta disponibilidad requiere mínimo 3 nodos impares).
+    - Diagnóstico preventivo con `rabbitmq-diagnostics check_if_node_is_quorum_critical` (código de salida 69 intencional). `rabbitmq_metadata` también es Raft y bloquea la creación de colas ante pérdida de mayoría.
+39. **Microservicio Administrador y Arquitectura de 2 Protocolos (L8 Tramo 3, IE6, IE7, IE8, IE17)**:
+    - Puerto `3020` (`vidalstore-admin`).
+    - 2 protocolos: AMQP (:5672) para mutaciones (`assertQueue`, `deleteQueue`, `assertExchange`, etc.), HTTP Management API (:15672) para lecturas (listar colas, métricas).
+    - Conexión TCP persistente única; canal AMQP efímero por operación con `canal.on('error', () => undefined)` para que un rechazo de canal no bote el proceso de Node.js ni afecte a otros clientes concurrentes.
+    - DTOs con `class-validator` y regex de nombres `NOMBRE_VALIDO = /^[a-zA-Z0-9._-]+$/`, routing key con `#` y `*`.
+    - `ValidationPipe` global con `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`.
+    - Encapsulación en `RabbitAdminService`: el controlador no habla con `amqplib` (cero llamadas directas).
+    - Método `traducir()`: `NOT_FOUND` $\rightarrow$ 404, `PRECONDITION_FAILED` $\rightarrow$ 409 Conflict, caída/quórum $\rightarrow$ 503 Service Unavailable (¡nunca 500 ciego!).
+    - Borrado idempotente: si el recurso no existe, retornar `200 OK`.
+40. **Observabilidad, Métricas del Clúster y Alarmas (L8 Tramo 4, IE18)**:
+    - 6 métricas clave: `messages_ready`, `messages_unacknowledged`, `disk_free` / `disk_alarm`, `mem_used` / `mem_alarm`, `running_nodes` / `partitions`, `object_totals.queues`.
+    - Consultas HTTP a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (escape obligatorio `%2F` del vhost `/`).
+    - Alerta crítica: `messages_ready` subiendo con 0 consumidores $\rightarrow$ worker caído (revisar logs, jamás reiniciar RabbitMQ ni purgar la cola).
+    - `messages_unacknowledged` congelado en el prefetch $\rightarrow$ consumidor bloqueado o sin `ack`.
+41. **Políticas de Retención, Límites y Estrategias de Desborde (L8 Tramo 5, IE19)**:
+    - Previene saturación de disco/memoria que bloquearía todo el broker con alarmas.
+    - `max-length`, `message-ttl` (se asigna al ENTRAR a la cola, no es retroactivo) y `overflow`.
+    - `drop-head` (descarta lo más viejo, ack al productor) para colas de avisos/efímeras.
+    - `reject-publish` (rechaza con nack al productor) para auditoría y colas de trabajo. Quorum queue admite 1 sobre el límite antes de rechazar.
+    - Políticas versionadas en `rabbitmq/politicas.json` y cargadas en Compose con `import_definitions`.
+    - Debate de retención en DLQ: `reject-publish` (Fail-Fast, no esconder errores) vs `drop-head` (conservar lo más reciente para análisis forense).
+42. **Prueba en Limpio del 17% (Evaluación Formativa 2, IE11)**:
+    - Demostración de clon limpio: `.env` desde `.env.example`, `docker compose down -v` y `docker compose up -d --wait`.
+    - Verificación con `cluster_status` con ambos nodos en `Running Nodes`.
 
 ---
 
@@ -256,18 +295,29 @@ Para responder cualquier decisión de arquitectura:
 
 ### 3.2 Rutas del Microservicio Administrador (EP2 · vidalstore-admin :3020 · Oscar)
 
-| Método | Ruta | Autenticación | Qué Hace / Métricas Relevantes | Código de Éxito | Códigos de Error (IE17) |
+> [!IMPORTANT]
+> **Modelo Zero Trust (IE6, IE7, IE8):** Todas las rutas de `vidalstore-admin` están protegidas a nivel de controlador con `@UseGuards(AuthGuard, RolesGuard)` y `@Roles('ADMIN', 'administradores')`.
+> Si una petición carece de token o tiene firma inválida, responde **`401 Unauthorized`**. Si el token es válido pero no posee el rol administrativo (ej. token de jugador o sin grupos), responde estrictamente **`403 Forbidden`**.
+
+| Método | Ruta | Autenticación y Rol | Qué Hace / Métricas Relevantes | Código de Éxito | Códigos de Error (IE7, IE17) |
 |---|---|---|---|:---:|:---:|
-| `GET` | `/v1/admin/queues` | `AuthGuard` (JWT) | Lista todas las colas con `messages`, `ready`, `unacked` y `consumers` (IE18) | `200 OK` | `401`, `503` |
-| `GET` | `/v1/admin/queues/:name` | `AuthGuard` (JWT) | Detalle y metadata de una cola (`x-dead-letter`, estado, memoria) | `200 OK` | `401`, `404`, `503` |
-| `GET` | `/v1/admin/exchanges` | `AuthGuard` (JWT) | Lista exchanges declarados (`topic` vs `direct`, durabilidad) | `200 OK` | `401`, `503` |
-| `POST` | `/v1/admin/publicar` | `AuthGuard` (JWT) | Publica evento administrativo inyectando `adminSub` de `req.user.sub` | `200 OK` | `400`, `401`, `503` |
-| `GET` | `/v1/admin/auth-test` | `AuthGuard` (JWT) | Prueba de verificación de claims (`sub`, grupos) | `200 OK` | `401` |
-| `GET` | `/v1/admin/me` | `AuthGuard` (JWT) | Retorna identidad del token autenticado | `200 OK` | `401` |
-| `GET` | `/v1/admin/bindings` | `AuthGuard` (JWT) | *(Siguiente rama)* Lista bindings activos entre exchanges y colas | `200 OK` | `401`, `503` |
-| `GET` | `/v1/admin/mensajes-muertos` | `AuthGuard` (JWT) | *(Semana 9)* Lista mensajes envenenados en tabla `mensajes_muertos` | `200 OK` | `401`, `503` |
-| `DELETE` | `/v1/admin/mensajes-muertos/:id`| `AuthGuard` (JWT) | *(Semana 9)* Elimina registro de mensaje muerto por ID | `200 OK` | `401`, `404`, `503` |
-| `POST` | `/v1/admin/dlq/:id/reproceso` | `AuthGuard` (JWT) | *(Grupos de 3)* Republica con `dlq.reprocesar` y marca `reprocesada=true` | `200 OK` | `400`, `401`, `404`, `503` |
+| `GET` | `/v1/admin/queues` (alias `/colas`) | `AuthGuard` + `RolesGuard` | Lista todas las colas con `messages`, `ready`, `unacked` y `consumers` (IE18) | `200 OK` | `401`, `403`, `503` |
+| `GET` | `/v1/admin/queues/:name` (alias `/colas/:name`) | `AuthGuard` + `RolesGuard` | Detalle y metadata de una cola (`x-dead-letter`, estado, memoria) | `200 OK` | `401`, `403`, `404`, `503` |
+| `POST` | `/v1/admin/queues` (alias `/colas`) | `AuthGuard` + `RolesGuard` | Crea una cola en RabbitMQ con `CrearColaDto` (`durable`, `arguments`) | `201 Created` | `400`, `401`, `403`, `503` |
+| `DELETE` | `/v1/admin/queues/:name` (alias `/colas/:name`) | `AuthGuard` + `RolesGuard` | Elimina una cola existente en RabbitMQ | `200 OK` | `401`, `403`, `404`, `503` |
+| `GET` | `/v1/admin/exchanges` | `AuthGuard` + `RolesGuard` | Lista exchanges declarados (`topic` vs `direct`, durabilidad) | `200 OK` | `401`, `403`, `503` |
+| `POST` | `/v1/admin/exchanges` | `AuthGuard` + `RolesGuard` | Crea un exchange en RabbitMQ con `CrearExchangeDto` (`type`, `durable`) | `201 Created` | `400`, `401`, `403`, `503` |
+| `DELETE` | `/v1/admin/exchanges/:name` | `AuthGuard` + `RolesGuard` | Elimina un exchange existente en RabbitMQ | `200 OK` | `401`, `403`, `404`, `503` |
+| `GET` | `/v1/admin/bindings` | `AuthGuard` + `RolesGuard` | Lista bindings activos entre exchanges y colas | `200 OK` | `401`, `403`, `503` |
+| `POST` | `/v1/admin/bindings` | `AuthGuard` + `RolesGuard` | Crea un enlace entre exchange y cola con `CrearBindingDto` (`routingKey`) | `201 Created` | `400`, `401`, `403`, `503` |
+| `DELETE` | `/v1/admin/bindings` | `AuthGuard` + `RolesGuard` | Elimina un binding específico entre exchange y cola | `200 OK` | `400`, `401`, `403`, `404`, `503` |
+| `GET` | `/v1/admin/cluster` | `AuthGuard` + `RolesGuard` | Resumen de salud del nodo RabbitMQ (`rabbit@rabbit1`, versión, listeners) | `200 OK` | `401`, `403`, `503` |
+| `GET` | `/v1/admin/mensajes-muertos` | `AuthGuard` + `RolesGuard` | Lista mensajes envenenados en tabla `mensajes_muertos` (PostgreSQL) | `200 OK` | `401`, `403`, `503` |
+| `DELETE` | `/v1/admin/mensajes-muertos/:id`| `AuthGuard` + `RolesGuard` | Purgado físico de mensaje muerto por ID (UUID v4) | `200 OK` | `400`, `401`, `403`, `404`, `503` |
+| `POST` | `/v1/admin/dlq/:id/reproceso` | `AuthGuard` + `RolesGuard` | Republica con `dlq.reprocesar` y marca `reprocesada=true` en PostgreSQL | `200 OK` | `400`, `401`, `403`, `404`, `503` |
+| `GET` | `/v1/admin/auth-test` | `AuthGuard` + `RolesGuard` | Prueba de verificación de claims (`sub`, grupos decodificados) | `200 OK` | `401`, `403` |
+| `GET` | `/v1/admin/me` | `AuthGuard` + `RolesGuard` | Retorna identidad del token autenticado | `200 OK` | `401`, `403` |
+| `POST` | `/v1/admin/publicar` | `AuthGuard` + `RolesGuard` | Publica evento inyectando `adminSub` de `req.user.sub` | `200 OK` | `400`, `401`, `403`, `503` |
 
 ---
 
@@ -361,18 +411,46 @@ Comprobar los 5 hitos fundamentales de la Semana 9:
 6. **Comprobación de DLQ ante Veneno**: Enviar mensaje con sintaxis inválida o sin `usuarioSub` -> El consumidor emite `canal.nack(mensaje, false, false)` sin reintentos, el mensaje aterriza en la DLQ correspondiente y `CartasMuertasConsumidor` lo persiste en `mensajes_muertos` con `payload text`.
 7. **Políticas de Retención**: Comprobar con `docker exec rabbit1 rabbitmqctl list_policies` que las políticas de `max-length` y `overflow` estén aplicadas para `avisos` (`drop-head`) y `auditoria` (`reject-publish`).
 
+### Paso 10: Despliegue Unificado Integral y Verificación en Vivo de Revocación (IE15 · Paso 7)
+1. **Despliegue Unificado (8 Contenedores)**: `docker-compose.yml` en la raíz orquesta los 8 servicios (`postgres`, `rabbitmq1`, `rabbitmq2`, `backend`, `eventos`, `admin`, `gateway`, `frontend`) con redes `vidalstore-net` y dependencias encadenadas `service_healthy`. Automatizado de punta a punta mediante `start-all.sh`.
+2. **Estándar de Montaje PostgreSQL 18**: En Debian 18+, el punto de montaje obligatorio es `- postgres-data:/var/lib/postgresql` (sin subdirectorio `/data`) para compatibilidad estricta con `pg_ctlcluster`. Mapeo host `5433:5432` para evitar colisión con el puerto local.
+3. **Flujo Completo de Revocación (IE15)**:
+   - **Frontend Angular (`:4200/admin/licencias`)**: El administrador presiona "Revocar licencia".
+   - **Gateway (`:8080`) y BFF (`:3001`)**: Validan JWT y rol administrativo, enrutando al microservicio de biblioteca (`:3004`).
+   - **Persistencia en Postgres y Regla L6A**: Biblioteca ejecuta `UPDATE licencias SET estado = 'revocada'` y, tras confirmar éxito en BD, publica `licencia.revocada` con entrega persistente (`persistent: true`) al topic exchange `vidalstore.eventos`.
+   - **Filtro de Licencias Activas**: `LicenciasDbService.obtenerTodasLasLicencias()` consulta `SELECT * FROM licencias WHERE estado = 'activa'`, logrando que la licencia revocada desaparezca de inmediato de la UI.
+   - **Consumo y Auditoría**: `AuditoriaConsumidor` en `vidalstore-eventos` (`:3010`) consume de `q.auditoria` y persiste el evento en la tabla `eventos_auditoria` (`recibido_en`, `evento_id`, `routing_key`).
+   - **Inspección en RabbitMQ Management UI (`:15672`)**: Bajo ventana temporal `last hour`, se observa el pico de publicación en `vidalstore.eventos` y el pico de `Consumer ack` en `q.auditoria`.
+
+### Paso 11: Puntos de Control y Verificación de L8 y L8A (Clúster, Quorum Queues, Administrador, Métricas y Políticas)
+1. **Autodescubrimiento del Clúster**: `docker compose up -d --wait` levanta ambos nodos; `rabbitmqctl cluster_status` muestra `rabbit@rabbit1` y `rabbit@rabbit2` en `Running Nodes` sin comandos manuales.
+2. **Quorum Queues y Prevención de 406**: Las 6 colas reportan tipo `quorum` en Management UI y `list_queues`. Si existían colas classic previas, fueron purgadas/borradas antes del up para evitar `406 PRECONDITION_FAILED`.
+3. **Resiliencia ante Caída de Nodo (Minority)**: Al detener `rabbit2` (`docker compose stop rabbit2`), `/api/queues` muestra `state: minority`; `rabbitmq-diagnostics check_if_node_is_quorum_critical` confirma salida 69 alertando nodo crítico. Al reencenderlo, Raft sincroniza sin pérdida de mensajes.
+4. **API del Microservicio Administrador (`:3020`)**: Ejecución de las 8 pruebas con `curl` documentadas en [cluster_y_microservicio_administrador_l8_l8a.md](./references/cluster_y_microservicio_administrador_l8_l8a.md#45-las-8-pruebas-obligatorias-de-la-api-del-administrador):
+   - Sin token $\rightarrow$ `401 Unauthorized`
+   - Token de jugador $\rightarrow$ `403 Forbidden`
+   - Body con campo desconocido $\rightarrow$ `400 Bad Request` (`forbidNonWhitelisted: true`)
+   - Body con nombre vacío $\rightarrow$ `400 Bad Request`
+   - Creación de cola quorum $\rightarrow$ `201 Created`
+   - Redeclarar con tipo classic $\rightarrow$ `409 Conflict` (`PRECONDITION_FAILED`)
+   - Binding a cola inexistente $\rightarrow$ `404 Not Found`
+   - Broker sin quórum o caído $\rightarrow$ `503 Service Unavailable`
+5. **Observabilidad y Escape `%2F`**: Consultas con autenticación Basic a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (con `%2F` codificado) y chequeo limpio en `/api/health/checks/alarms` (`{"status":"ok"}`).
+6. **Políticas de Retención en Repositorio**: `rabbitmq/politicas.json` montado en el compose y cargado con `import_definitions`. Comprobación con `list_policies` de `drop-head` para avisos y `reject-publish` para auditoría y DLQ.
+
 ---
 
 ## 5. Guías de Referencia Detalladas
 
 Para profundizar en áreas específicas del encargo, consultar los siguientes documentos de referencia adjuntos:
+- [Guía Técnica de Clúster RabbitMQ, Quorum Queues y Microservicio Administrador (L8 y L8A)](./references/cluster_y_microservicio_administrador_l8_l8a.md): Clúster de 2 nodos en Compose, `cluster.conf`, Quorum Queues con Raft, regla de la mayoría $\lfloor N/2 \rfloor + 1$, microservicio administrador con arquitectura de 2 protocolos, DTOs y validación estricta, las 6 métricas clave de observabilidad, políticas de retención con `drop-head` y `reject-publish`, y tabla de 25+ errores frecuentes.
 - [Guía Técnica de Diagnóstico, Idempotencia, Clúster RabbitMQ y Políticas (D9 y LA9)](./references/diagnostico_cluster_idempotencia_d9_la9.md): Método de diagnóstico en 4 pasos, lectura de stack traces (`src/`), Quorum Queues con Raft, regla de mayoría de 2 nodos, políticas de retención (`drop-head` vs `reject-publish`), y las 3 capas de error de Compose.
 - [Guía Técnica de Compose, DLQ y Persistencia (D8, L7A y L7)](./references/mensajeria_compose_dlq_persistencia_l7.md): Orquestación multi-contenedor, durabilidades, prefetch(1), topología con DLX/DLQ, idempotencia con UNIQUE, TypeORM, CartasMuertasConsumidor y mapeo Biblioteca vs VidalStore.
 - [Guía Técnica de Mensajería, Docker y RabbitMQ (D7, L6 y L6A)](./references/mensajeria_docker_rabbitmq_l6.md): Dos vías del sistema, topología AMQP, Docker de verdad, `ack` explícito, `timestamptz` y transición a EP2.
 - [Rúbrica Oficial Detallada (IE1 a IE19)](./references/rubrica_completa.md): Ponderaciones de EP1 (40%) y EP2 (40% encargo grupal IE1 a IE8 + 60% defensa individual IE9 a IE19), con el orden oficial de demostración de 11 pasos y prioridades de tiempo.
 - [Arquitectura de 4 Capas y Códigos HTTP](./references/arquitectura_4_capas.md): Responsabilidad de cada componente, CORS, flujo de petición de arriba a abajo y distinción Cloud vs Local.
 - [Configuración de Cognito y Seguridad](./references/cognito_y_seguridad.md): User Pool, Resource Server, grupos, scopes, App Clients, auto-registro y Lambda trigger.
-- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas de `Pulso.pdf` §12.2 + 10 preguntas de D7/L6/L6A + Guion oficial de D6 + 15 preguntas oficiales de D8, L7A y L7 (Bloque F) + 10 preguntas del Administrador (Bloque G) + 14 preguntas de D9/LA9 (Bloque H) + 13 preguntas oficiales del enunciado EP2 §5.3 (Bloque I).
+- [Banco de Preguntas Oficiales para la Defensa Técnica](./references/preguntas_defensa.md): Las 8 preguntas de `Pulso.pdf` §12.2 + 10 preguntas de D7/L6/L6A + Guion oficial de D6 + 15 preguntas oficiales de D8, L7A y L7 (Bloque F) + 10 preguntas del Administrador (Bloque G) + 14 preguntas de D9/LA9 (Bloque H) + 13 preguntas oficiales del enunciado EP2 §5.3 (Bloque I) + 18 preguntas oficiales de L8/L8A (Bloque J).
 - [Metodología de Plan de Implementación y Walkthrough](./references/metodologia_plan_y_walkthrough.md): Plantillas estándar obligatorias para la planificación interactiva previa y el informe de walkthrough posterior con evidencias de pruebas y guión de defensa.
 
 ---
