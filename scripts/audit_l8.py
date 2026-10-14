@@ -182,11 +182,7 @@ def audit_admin_microservice():
         check_warn("No se encontró archivo DTO explícito de colas en el administrador")
 
     # 3.3 ValidationPipe global
-    admin_main = None
-    for root, _, files in os.walk(BASE_DIR):
-        if "admin" in root and "main.ts" in files:
-            admin_main = os.path.join(root, "main.ts")
-            break
+    admin_main = find_file("main.ts", search_dirs=[os.path.join(BASE_DIR, "vidalstore-admin")])
             
     if admin_main:
         content = read_content(admin_main)
