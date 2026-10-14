@@ -333,64 +333,64 @@ export async function conReintentos<T>(
 | **Colisión por duplicado (código SQL `23505`)** | `canal.ack(mensaje)` y registro en log de advertencia | El mensaje ya se persistió con éxito en una entrega anterior. Es la reentrega prometida por *at least once*. |
 | **Base de datos detenida, corte de red, error de conexión (`ECONNREFUSED`, `getaddrinfo`)** | Hasta 3 intentos esperando 2s y 4s con `conReintentos`. Si se agotan, `canal.nack(mensaje, false, false)` hacia DLQ | El mensaje está sano; el que está caído es el entorno. Se reintenta temporalmente y, si la falla persiste, se resguarda en la DLQ. |
 
+### 7.2 ¿Existen Colas de Reintento dentro de RabbitMQ?
+* **En RabbitMQ NO se configuran colas de reintento intermedias** (del tipo `q.*.retry` con TTL `x-message-ttl` que devuelven el mensaje cíclicamente a la cola principal).
+* **El reintento se resuelve en código de aplicación (en memoria)**: El worker ejecuta `conReintentos` / `procesarConReintentos` dentro de su proceso Node.js con retroceso escalonado (2s y 4s).
+* **Desvío final**: Si los reintentos se agotan o el mensaje es veneno, se ejecuta `canal.nack(mensaje, false, false)`. RabbitMQ lo transfiere a la **DLQ** (`dlq.avisos`, `dlq.auditoria`, `dlq.correos`).
+* **Cola de Reprocesamiento (`q.reprocesar`)**: Es una cola separada reservada para el flujo de contingencia manual (Grupos de 3 / Semana 10). Se activa cuando el microservicio `vidalstore-admin` dispara `POST /v1/admin/dlq/:id/reproceso`, republicando hacia `dlq.reprocesar` para que el worker la reenvíe a la cola operativa original con headers forenses.
+
 ---
 
-## 8. Persistencia Relacional con TypeORM: 4 Tablas y 2 Dueños (L7 Tramos 4 y 5)
+## 8. Persistencia Relacional: TypeORM en Worker vs Conexión Directa en Productor y Administrador (L7 Tramos 4 y 5)
 
-En la base de datos PostgreSQL conviven 4 tablas con estricta segregación de dominios y **cero Foreign Keys entre servicios**.
+En la base de datos PostgreSQL conviven 4 tablas con estricta segregación de dominios, **cero Foreign Keys entre servicios** y diferentes estrategias de conexión según el rol del componente:
 
-### 8.1 Dueño 1: Worker (`vidalstore-eventos` / `biblioteca-eventos`) · Esquema `public`
-1. **`eventos_auditoria`**:
-   - `id`: `uuid` PK.
-   - `routing_key`: `text` NOT NULL.
-   - `evento_id`: `uuid` NOT NULL UNIQUE (provee la idempotencia).
-   - `usuario_sub`: `text` NULL (permite eventos del sistema sin usuario humano).
-   - `payload`: **`jsonb`** NOT NULL (es JSON válido garantizado tras pasar `JSON.parse`). Permite consultas indexadas (`payload ->> 'juegoId'`).
-   - `emitido_en`: `timestamptz` NOT NULL (header `x-emitido-en`).
-   - `recibido_en`: `timestamptz` NOT NULL DEFAULT now().
-
-2. **`notificaciones`**:
-   - `id`: `uuid` PK.
-   - `para`: `text` NOT NULL (`usuarioSub` del destinatario).
-   - `asunto`: `text` NOT NULL.
-   - `estado`: `text` NOT NULL con restricción `CHECK (estado IN ('enviada', 'fallida'))`.
-   - `evento_id`: `uuid` NOT NULL (relación lógica con auditoría, sin FK).
-   - `enviada_en`: `timestamptz` NOT NULL DEFAULT now().
-
-3. **`mensajes_muertos`**:
-   - `id`: `uuid` PK.
-   - `cola_origen`: `text` NOT NULL (`x-first-death-queue`).
-   - `routing_key`: `text` NOT NULL (`x-death[0].routing-keys[0]`).
-   - `motivo`: `text` NOT NULL (`x-death[0].reason`).
-   - `intentos`: `int` NOT NULL con restricción `CHECK (intentos >= 1)`.
-   - `payload`: **`text`** NOT NULL (**JAMÁS `jsonb`**, porque justamente almacena los payloads corruptos que no pudieron ser parseados como JSON).
-   - `recibido_en`: `timestamptz` NOT NULL DEFAULT now().
+### 8.1 Dueño 1: Worker (`vidalstore-eventos` / `biblioteca-eventos`) · ORM (TypeORM) · Esquema `public`
+El worker adopta **TypeORM** (`@nestjs/typeorm` y `typeorm`) según la pauta oficial de L7:
+1. **Configuración**: `TypeOrmModule.forRootAsync()` con `synchronize: false` y migraciones versionadas.
+2. **Entidades y Repositorios**: Clases TypeScript decoradas (`@Entity()`, `@Column()`, `@Index()`) inyectadas vía `@InjectRepository()`.
+3. **Tablas bajo su control**:
+   - **`eventos_auditoria`**: `id uuid PK`, `routing_key text`, `evento_id uuid UNIQUE` (idempotencia), `usuario_sub text nullable`, `payload jsonb`, `emitido_en timestamptz`, `recibido_en timestamptz`.
+   - **`notificaciones`**: `id uuid PK`, `para text`, `asunto text`, `estado text CHECK (estado IN ('enviada', 'fallida'))`, `evento_id uuid`, `enviada_en timestamptz`.
+   - **`mensajes_muertos`**: `id uuid PK`, `cola_origen text`, `routing_key text`, `motivo text`, `intentos int CHECK (intentos >= 1)`, `payload text` (**JAMÁS `jsonb`**, para aceptar payloads corruptos), `reprocesada boolean DEFAULT false`, `recibido_en timestamptz`.
 
 > [!TIP]
 > **Por qué `CHECK` en la base y no solo un `type` o `enum` en TypeScript:**
 > Un tipo de TypeScript solo lo valida el transpilador antes de compilar. La base de datos no sabe nada de TypeScript; cualquier inserción directa vía `psql`, script de migración u otro microservicio podría insertar valores inconsistentes si no existiera la restricción `CHECK` ejecutada por el propio PostgreSQL.
 
-### 8.2 Dueño 2: Microservicio Productor (`licencias` / `prestamos`) · Esquema Dedicado
-* Tabla `licencias` (o `prestamos.prestamos`):
-  - `id`: `serial` / `identity` PK.
-  - `juego_id`: `int` NOT NULL (relación lógica con catálogo, sin FK).
+### 8.2 Dueño 2: Microservicio Productor de Licencias (`vidalstore-backend`) · Conexión Directa (`pg.Pool`) · Esquema `licencias`
+El backend **NO utiliza ORM**, sino una **conexión directa con pool nativo** (`pg` / `node-postgres`):
+* **Motivo arquitectónico**: Máximo rendimiento transaccional, tolerancia a fallos desacoplada y control fino sobre el DDL con índices parciales.
+* **Componente**: `LicenciasDbService` inicializa `new pg.Pool({...})` con `connectionTimeoutMillis: 3000` y escucha `pool.on('error', ...)`.
+* **Tabla `licencias`**:
+  - `id`: `uuid` PK (`gen_random_uuid()`).
+  - `juego_id`: `text` NOT NULL (relación lógica con catálogo, sin FK).
   - `usuario_sub`: `text` NOT NULL (extraído de `req.user.sub`).
   - `estado`: `text` NOT NULL CHECK (estado IN ('activa', 'revocada')).
-  - `adquirida_en`: `timestamptz` NOT NULL DEFAULT now().
-  - `revocada_en`: `timestamptz` NULL.
-  - `revocada_por`: `text` NULL (`sub` del administrador que ejecutó la revocación).
+  - `precio_pagado`: `numeric(10, 2)`.
+  - `creado_en` / `actualizado_en`: `timestamptz`.
+* **Índice Parcial Único Obligatorio (Regla de Arturo)**:
+  ```sql
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_licencias_usuario_juego_activa
+  ON licencias (usuario_sub, juego_id)
+  WHERE estado = 'activa';
+  ```
+  Permite que un usuario compre nuevamente un juego si su licencia anterior fue revocada, impidiendo al mismo tiempo compras duplicadas concurrentes de licencias activas.
 
-> [!IMPORTANT]
-> **La Regla del Índice Parcial (Arturo):**
-> Un jugador no puede tener dos licencias activas del mismo juego, pero sí puede volver a comprarlo legalmente si la anterior fue revocada.
-> Un `UNIQUE (usuario_sub, juego_id)` plano impediría una segunda compra de por vida.
-> **Solución**: Crear un **índice único parcial**:
-> ```sql
-> CREATE UNIQUE INDEX uq_licencias_activas 
-> ON licencias.licencias (usuario_sub, juego_id) 
-> WHERE estado = 'activa';
-> ```
-> En TypeORM: `@Index(['usuarioSub', 'juegoId'], { unique: true, where: "estado = 'activa'" })`.
+### 8.3 Dueño 3: Microservicio Administrador (`vidalstore-admin`) · Conexión Directa (`pg.Pool`)
+El microservicio administrativo **NO utiliza ORM**:
+* **Motivo arquitectónico**: Acceso forense de bajo nivel e inspección directa sin overhead de entidades orquestadas.
+* **Componente**: `RabbitAdminService` utiliza `pg.Pool` directamente para ejecutar DDL seguro (`CREATE TABLE IF NOT EXISTS mensajes_muertos`), consultas cronológicas de cartas muertas (`SELECT ... ORDER BY recibido_en DESC`), eliminación física (`DELETE ... WHERE id = $1`) y actualización atómica de reproceso (`UPDATE mensajes_muertos SET reprocesada = true WHERE id = $1`).
+
+### 8.4 Matriz Resumen de Conexión a Base de Datos en el Sistema
+
+| Microservicio | Motor de Conexión | ¿Usa ORM? | Responsabilidad en PostgreSQL |
+| :--- | :--- | :--- | :--- |
+| **`vidalstore-eventos`** | **TypeORM** (`@nestjs/typeorm`) | **SÍ** | Persistencia asíncrona de eventos en `eventos_auditoria`, `notificaciones` y `mensajes_muertos`. Migraciones versionadas. |
+| **`vidalstore-backend`** | **Driver nativo `pg.Pool`** | **NO** | Almacenamiento transaccional de compras sincrónicas en `licencias` con índice parcial único. |
+| **`vidalstore-admin`** | **Driver nativo `pg.Pool`** | **NO** | Auditoría, listado, eliminación y marcado de reproceso de cartas muertas en `mensajes_muertos`. |
+| **`vidalstore-gateway`** | N/A | **NO** | Perímetro de seguridad, validación JWT y scopes; no persiste datos. |
+| **`vidalstore-frontend`** | N/A | **NO** | SPA Angular en navegador; no accede a base de datos. |
 
 ---
 

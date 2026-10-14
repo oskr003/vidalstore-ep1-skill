@@ -1596,3 +1596,184 @@ Este glosario reúne todos los conceptos teóricos, siglas, estándares y patron
 - 💡 **En Palabras Simples:** Es una alarma roja que te avisa: *"Si apagas este servidor ahora mismo, rompes el quórum del clúster y las colas no podrán confirmar escrituras"*.
 
 ---
+
+### 20.5 Topología y Mensajería AMQP (D7, D8, D9 y Laboratorios L6 a L8)
+
+#### 27. Exchange (Intercambiador AMQP)
+- ⚡ **Definición Técnica:** Entidad de enrutamiento interna de RabbitMQ encargada de recibir los mensajes publicados por los productores y decidir, en función de su tipo y las reglas de enlace (*bindings*), a qué cola o colas entregarlos. **Regla de oro de AMQP:** Un productor nunca publica directamente en una cola; siempre publica en un Exchange. Si un Exchange recibe un mensaje y no existe ninguna cola enlazada que coincida con su criterio, el mensaje se descarta en silencio (a menos que se use la bandera `mandatory`).
+  - **`topic` (`vidalstore.eventos`):** Enrutador flexible basado en patrones jerárquicos de palabras separadas por puntos (ej: `compra.realizada`, `licencia.revocada`). Permite suscripciones selectivas con comodines (`*` y `#`).
+  - **`direct` (`vidalstore.comandos` y `vidalstore.dlx`):** Enrutador de coincidencia exacta punto a punto. La routing key del mensaje debe coincidir exactamente carácter por carácter con la binding key de la cola enlazada.
+  - **`fanout`:** Enrutador de difusión masiva (*broadcast*). Ignora por completo la routing key y entrega una copia del mensaje a todas las colas enlazadas a él.
+  - **`headers`:** Enrutador basado en pares clave-valor dentro de los encabezados del mensaje en lugar de una routing key alfanumérica.
+- 💡 **En Palabras Simples:** El Exchange es la oficina central de correos. Tú como remitente no vas a dejar la carta al buzón de la casa de tu amigo; la llevas a la oficina postal, y el clasificador mira el sobre y decide en qué saco de transporte meterla.
+
+#### 28. Binding (Enlace o Vinculación)
+- ⚡ **Definición Técnica:** Relación contractual configurada entre un Exchange y una Cola (`canal.bindQueue(cola, exchange, routingKey)`). Actúa como la regla de filtrado que le dice al Exchange qué mensajes debe desviar hacia dicha cola. Puede incluir argumentos avanzados como `x-match` en exchanges de cabeceras.
+- 💡 **En Palabras Simples:** Es la tubería física con válvula que conecta el estanque principal (Exchange) con tu tinaco personal (Cola). La válvula solo se abre cuando el agua trae el color exacto que pediste en la etiqueta.
+
+#### 29. Routing Key vs Binding Key
+- ⚡ **Definición Técnica:**
+  - **Routing Key:** Etiqueta alfanumérica que el **productor** adjunta al mensaje al momento de publicarlo (`canal.publish(exchange, routingKey, buffer)`). Representa el hecho consumado o comando (ej: `compra.realizada`).
+  - **Binding Key (o Routing Pattern):** Criterio de búsqueda o patrón que la **cola** registra ante el Exchange al enlazarse.
+  - En exchanges de tipo `direct`, deben ser cadenas idénticas. En exchanges de tipo `topic`, el binding key puede incluir comodines de suscripción.
+- 💡 **En Palabras Simples:** La *Routing Key* es la dirección que tú escribes en el sobre; la *Binding Key* es el letrero que tiene el cartero en su casillero para saber qué cartas corresponden a su zona.
+
+#### 30. Comodines Topic (`*` vs `#`)
+- ⚡ **Definición Técnica:**
+  - **`*` (Asterisco):** Sustituye **exactamente una palabra** delimitada por puntos. Ejemplo: `compra.*` captura `compra.realizada` y `compra.cancelada`, pero NO `compra.fallida.saldo`.
+  - **`#` (Hash / Almohadilla):** Sustituye **cero, una o múltiples palabras**. Ejemplo: `#` captura cualquier evento que pase por el exchange; `licencia.#` captura `licencia.revocada`, `licencia.renovada.anual`, etc. En VidalStore, la cola `q.auditoria` usa `#` para registrar legalmente el 100% de la actividad del sistema.
+- 💡 **En Palabras Simples:** El asterisco es un comodín de un solo dígito (como el guion de un RUT); el hash es un comodín infinito (como el "%" en una consulta SQL `LIKE`).
+
+#### 31. Dead Letter Exchange (DLX) y Dead Letter Queue (DLQ)
+- ⚡ **Definición Técnica:** Mecanismo nativo de RabbitMQ para capturar mensajes que no pudieron ser procesados exitosamente por las colas de trabajo. Cuando un consumidor rechaza un mensaje con `canal.nack(mensaje, false, false)` o `canal.reject(mensaje, false)`, o cuando expira su TTL o la cola desborda por `drop-head`, el broker lo reenvía automáticamente al Exchange declarado en el argumento `x-dead-letter-exchange` (`vidalstore.dlx`).
+  - **Orden estricto de topología:** El DLX y las 3 DLQ (`dlq.avisos`, `dlq.auditoria`, `dlq.correos`) **deben declararse antes** que las colas de trabajo para garantizar que cualquier descarte tenga un destino válido inmediato.
+  - **Cero pérdida de evidencia:** Las DLQ deben almacenar el payload como `text` en PostgreSQL (`mensajes_muertos`) y nunca usar TTL corto ni `drop-head`, ya que destruirían la prueba forense.
+- 💡 **En Palabras Simples:** Es el hospital y morgue del sistema. Si un paquete llega roto o con veneno, no lo dejas tirado en la cinta transportadora ni lo vuelves a meter a la fila; lo desvías a una sala especial de cuarentena para que los peritos investiguen qué falló sin detener el trabajo de los demás.
+
+#### 32. Las Tres Durabilidades Indispensables (D8 Slides 22-24)
+- ⚡ **Definición Técnica:** Para que un mensaje sobreviva a un reinicio físico del contenedor o del servidor RabbitMQ sin perderse jamás, se requiere la concurrencia estricta de tres capas:
+  1. **Volumen nombrado de Docker:** `rabbitmq1-data:/var/lib/rabbitmq` para que la base de datos Mnesia/Khepri persista en el disco del anfitrión.
+  2. **Cola durable:** Declarada con `{ durable: true }` para que la estructura de la cola sobreviva al reinicio del broker.
+  3. **Mensaje persistente:** Publicado con `{ persistent: true }` (o `deliveryMode: 2`) para que RabbitMQ escriba el payload en el log de disco antes de confirmar al productor.
+  - *Fallo parcial:* Si falta el volumen, se pierde todo al recrear. Si falta la cola, desaparece al reiniciar. Si falta el mensaje persistente, la cola sobrevive pero amanece vacía.
+- 💡 **En Palabras Simples:** Es como guardar un documento importante: necesitas un cuaderno resistente (cola durable), escribir con tinta indeleble (mensaje persistente) y guardar el cuaderno dentro de una caja fuerte con llave (volumen Docker). Si te falta cualquiera de los tres, pierdes la información.
+
+#### 33. Control de Flujo con Prefetch (`prefetch(1)`)
+- ⚡ **Definición Técnica:** Directiva de canal AMQP (`await canal.prefetch(1)`) que limita la cantidad de mensajes no confirmados (*unacknowledged*) que el broker puede enviar a un consumidor específico antes de recibir su correspondiente `ack`.
+  - **Prevención de colapso:** Si la base de datos PostgreSQL cae o sufre lentitud, `prefetch(1)` impide que el worker absorba 50.000 mensajes de golpe en su memoria RAM, permitiendo pausar el consumo ordenadamente mientras se reintenta la conexión.
+- 💡 **En Palabras Simples:** Es como pedirle al mesero que te sirva **un plato a la vez**: hasta que no termines y entregues el plato limpio, no te traen el siguiente. Si te trajeran los 20 platos juntos a la mesa, la comida se enfriaría y la mesa se rompería por el peso.
+
+#### 34. Políticas de Retención y Desborde (`drop-head` vs `reject-publish`)
+- ⚡ **Definición Técnica:** Reglas de gestión de memoria y almacenamiento aplicadas dinámicamente con `rabbitmqctl set_policy` sin tocar código ni reiniciar contenedores.
+  - **`drop-head`:** Cuando la cola alcanza su límite (`max-length` o `max-length-bytes`), descarta el mensaje más antiguo de la cabecera en silencio y confirma `ack` al productor. Ideal para colas efímeras de usuario final (**Avisos** y **Correos**).
+  - **`reject-publish`:** Cuando la cola se llena, rechaza inmediatamente la nueva publicación emitiendo un `basic.nack` al productor. Obligatorio para colas críticas de cumplimiento legal (**Auditoría**) y colas de contingencia (**DLQs**).
+- 💡 **En Palabras Simples:** `drop-head` es como el buzón de llamadas recientes del celular (si entra una llamada nueva, borra la más vieja del mes pasado sin avisar); `reject-publish` es como una caja fuerte que cuando se llena traba la ranura e impide meter un sobre más hasta que alguien saque los anteriores.
+
+---
+
+## 21. Metodología Oficial de Diagnóstico en 4 Pasos (D9)
+
+En la clase magistral D9 ("Diagnosticar sin adivinar y clúster RabbitMQ"), el profesor Umbingelelo establece que el desarrollo y la defensa de arquitecturas distribuidas Cloud Native **no consisten en adivinar rápido o cambiar código al azar**, sino en **reducir el espacio de lo posible mediante evidencia sistemática**.
+
+### 21.1 El Recorrido de los 4 Pasos
+
+```
+   ┌─────────────┐       ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+   │   PASO 1    │  ───> │   PASO 2    │  ───> │   PASO 3    │  ───> │   PASO 4    │
+   │   SÍNTOMA   │       │  HIPÓTESIS  │       │   COMANDO   │       │   CAMBIO    │
+   └─────────────┘       └─────────────┘       └─────────────┘       └─────────────┘
+          │                                           │ (Si descarta)       │
+          └───────────────────────────────────────────┴─────────────────────┘
+```
+
+1. **Paso 1 · Síntoma:**
+   - Enunciar con precisión qué se ve, usando sus palabras exactas: `connect ECONNREFUSED 172.25.0.2:5432`, y **jamás frases vagas como "no funciona" o "se cayó"**.
+   - **Regla del log de Compose:** El log se lee estrictamente **de arriba hacia abajo**. La última línea suele ser solo una consecuencia irrelevante (ej: `eventos exited with code 1`); la causa raíz es el **primer renglón anormal**.
+   - **Lectura de Stack Trace:** Se descarta todo el ruido de librerías (`node:net`, `node_modules/amqplib/`, `node_modules/pg/`) y **te detienes en la primera línea de código propio (`src/...`)**.
+2. **Paso 2 · Hipótesis:**
+   - Construir una explicación técnica, concreta y **estrictamente falsable**: *"Postgres arrancó pero todavía no acepta conexiones TCP en el puerto 5432 porque `initdb` sigue inicializando los archivos del clúster"*.
+3. **Paso 3 · Comando:**
+   - Ejecutar el comando exacto de diagnóstico que **confirma o descarta** la hipótesis: `docker compose ps` o `docker exec rabbit1 rabbitmqctl eval 'node().'`.
+   - **Regla innegociable:** Si el comando descarta la hipótesis, **se regresa al Paso 2**. Está estrictamente prohibido pasar al Paso 4 sin haber confirmado con evidencia.
+4. **Paso 4 · Cambio:**
+   - Aplicar **una sola modificación**, la señalada por la hipótesis confirmada, y volver a probar para verificar si el síntoma desapareció.
+
+### 21.2 Matriz de las Cuatro Salidas del Consumidor (IE5)
+
+En el consumidor de eventos (`vidalstore-eventos`), el manejo de excepciones no es un simple `try/catch` genérico; implementa cuatro salidas mutuamente excluyentes:
+
+| Escenario | Ejemplo en VidalStore | Acción AMQP | Destino del Mensaje |
+|---|---|:---:|:---:|
+| **1. Éxito** | Evento `licencia.revocada` guardado en `eventos_auditoria` | `canal.ack(mensaje)` tras el `INSERT` | Fuera de la cola (procesado) |
+| **2. Duplicado (Idempotencia)** | Reentrega de RabbitMQ choca con `UNIQUE (evento_id)` (**SQLSTATE 23505**) | Log `WARN` + `canal.ack(mensaje)` | Fuera de la cola (sin duplicar ni enviar a DLQ) |
+| **3. Error Permanente / Veneno** | JSON corrupto, sintaxis rota o falta `usuarioSub` (SQLSTATE `22...` o `23...`) | `canal.nack(mensaje, false, false)` sin reintentos | DLX $\rightarrow$ `dlq.auditoria` $\rightarrow$ `mensajes_muertos` |
+| **4. Error Transitorio de Red** | PostgreSQL temporalmente no responde (`ECONNREFUSED` / timeout) | `conReintentos` (backoff exponencial 2s, 4s); si se agotan, `nack(false, false)` | Reintento en memoria; si persiste, viaja a DLQ |
+
+---
+
+## 22. Catálogo Forense de 10 Errores Reales para la Defensa Técnica
+
+Para responder con máxima solvencia en la defensa individual (15 minutos cronometrados y modificaciones señaladas), a continuación se detallan los 10 errores más comunes de la arquitectura distribuidos bajo el framework de los 4 pasos de D9:
+
+---
+
+### Caso 1 · `connect ECONNREFUSED 172.25.0.2:5432` en el arranque
+* **1. Síntoma:** `connect ECONNREFUSED 172.25.0.2:5432` en el primer segundo de vida de `vidalstore-eventos` o `vidalstore-backend`.
+* **2. Hipótesis:** El contenedor de PostgreSQL existe y está corriendo, pero el motor de base de datos aún no abre el socket TCP porque está ejecutando scripts de inicialización (`initdb`).
+* **3. Comando:** `docker compose ps`. Se observa `postgres` en estado `Up (health: starting)` mientras `eventos` ya falló con `Exit 1`.
+* **4. Cambio:** En `docker-compose.yml`, configurar healthcheck con `pg_isready -U vidalstore -d vidalstore_eventos` y vincular el consumidor con `depends_on: postgres: { condition: service_healthy }`.
+
+---
+
+### Caso 2 · Colas desaparecidas tras recrear el contenedor de RabbitMQ
+* **1. Síntoma:** Se borra el contenedor con `docker rm -f vidalstore-rabbitmq1`, se vuelve a desplegar montando el mismo volumen nombrado `rabbitmq1-data:/var/lib/rabbitmq`, y `rabbitmqctl list_queues` devuelve una lista vacía.
+* **2. Hipótesis:** No se fijó un hostname estático. Docker generó un Container ID aleatorio (ej. `a3f89bc1`), provocando que Erlang creara un nuevo directorio Mnesia (`mnesia/rabbit@a3f89bc1`), ignorando la base de datos anterior que residía en `mnesia/rabbit@rabbitmq1`.
+* **3. Comando:** `docker exec vidalstore-rabbitmq1 rabbitmqctl eval 'node().'`. Devuelve `rabbit@<id_aleatorio>` en vez de `rabbit@rabbitmq1`.
+* **4. Cambio:** Fijar obligatoriamente `hostname: rabbitmq1` en `docker-compose.yml`.
+
+---
+
+### Caso 3 · `messages_unacknowledged` congelado y entrega detenida (`deliver: 0`)
+* **1. Síntoma:** En la cola `q.avisos`, `messages_ready` sube sin cesar, `messages_unacknowledged` permanece exactamente en 1 (o en el valor de prefetch), `consumers` es 1 y `deliver_rate` cae a 0 msg/s.
+* **2. Hipótesis:** El consumidor recibió el mensaje y ejecutó la lógica, pero olvidó invocar `this.canal.ack(mensaje)`. Debido al control de flujo `prefetch(1)`, RabbitMQ bloquea la entrega de nuevos mensajes hasta que el mensaje pendiente sea confirmado.
+* **3. Comando:** `docker exec vidalstore-rabbitmq1 rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers`.
+* **4. Cambio:** Agregar la llamada explícita `this.canal.ack(mensaje)` al finalizar el bloque de ejecución exitosa en el consumidor.
+
+---
+
+### Caso 4 · Mensaje envenenado ciclando indefinidamente (bucle de saturación)
+* **1. Síntoma:** Un mensaje con payload corrupto genera miles de líneas de error por segundo en la terminal de `vidalstore-eventos`, saturando la CPU y bloqueando a otros consumidores.
+* **2. Hipótesis:** El bloque `catch` del consumidor ejecutó `canal.nack(mensaje, false, true)` con `requeue: true`, obligando a RabbitMQ a reinsertar el mensaje al frente de la cola de inmediato.
+* **3. Comando:** `docker compose logs --tail 20 eventos`. Se observa el mismo `SyntaxError: Unexpected token` repitiéndose infinitamente con idéntica marca de tiempo.
+* **4. Cambio:** Cambiar la instrucción a `canal.nack(mensaje, false, false)` sin reencolado, permitiendo que el Dead Letter Exchange (`vidalstore.dlx`) lo desvíe ordenadamente a `dlq.auditoria`.
+
+---
+
+### Caso 5 · Error SQL `23505 unique_violation` ante reentrega de red
+* **1. Síntoma:** `error: duplicate key value violates unique constraint "uq_eventos_auditoria_evento_id"` en el log de `vidalstore-eventos`.
+* **2. Hipótesis:** La red falló un microsegundo antes de que el `ack` llegara al broker. RabbitMQ reentregó el mensaje por política *at least once*. Al reinsertar, la restricción `UNIQUE` en PostgreSQL frena la duplicación física (idempotencia).
+* **3. Comando:** `docker exec vidalstore-postgres psql -U vidalstore -d vidalstore_eventos -c "SELECT count(*) FROM eventos_auditoria WHERE evento_id = '<uuid>';"`. Devuelve exactamente `1`.
+* **4. Cambio:** En `procesarEventoAuditoria.ts`, atrapar el error del driver con código `23505`, emitir un log `WARN` ("evento ya persistido; se confirma reentrega") y confirmar con `canal.ack(mensaje)` sin arrojar excepción.
+
+---
+
+### Caso 6 · Error `406 PRECONDITION_FAILED` al declarar colas o DLQs
+* **1. Síntoma:** `Channel closed by server: 406 (PRECONDITION_FAILED) with message: "inequivalent arg 'x-dead-letter-exchange' for queue 'q.avisos'"`. El worker aborta su arranque.
+* **2. Hipótesis:** La cola `q.avisos` ya existía previamente en RabbitMQ creada sin DLX o con tipo clásico, y el código intentó redeclararla con argumentos nuevos. RabbitMQ prohíbe alterar argumentos de colas vivas.
+* **3. Comando:** `docker exec vidalstore-rabbitmq1 rabbitmqctl list_queues name type arguments`.
+* **4. Cambio:** Eliminar la cola obsoleta con `docker exec vidalstore-rabbitmq1 rabbitmqctl delete_queue q.avisos` y reiniciar el worker para que declare los argumentos definitivos.
+
+---
+
+### Caso 7 · Caída de nodo secundario entra en estado `minority` (RabbitMQ 4)
+* **1. Síntoma:** Al detener `vidalstore-rabbitmq2`, las Quorum Queues en `vidalstore-rabbitmq1` dejan de confirmar publicaciones y los productores quedan colgados esperando respuesta.
+* **2. Hipótesis:** En un clúster de $N=2$ nodos, la mayoría Raft es $\lfloor 2/2 \rfloor + 1 = 2$. Al caer un nodo, el líder queda con 1 réplica, pierde quórum mayoritario y entra en estado `minority`, suspendiendo confirmaciones para evitar escrituras inconsistentes.
+* **3. Comando:** `curl -s -u vidalstore:cambia-esta-password http://localhost:15672/api/queues/%2F/q.auditoria | grep '"state":'`. Muestra `"state":"minority"`.
+* **4. Cambio:** En la defensa se explica que **2 nodos garantizan durabilidad física en 2 discos pero toleran 0 caídas**. La alta disponibilidad real exige mínimo 3 nodos impares. Para restaurar, se ejecuta `docker compose start rabbitmq2`.
+
+---
+
+### Caso 8 · Microservicio Administrador responde `503 Service Unavailable`
+* **1. Síntoma:** El cliente REST llama a `POST /v1/admin/queues` y recibe `503 Service Unavailable` con cuerpo JSON descriptivo en lugar de una caída con error 500.
+* **2. Hipótesis:** El clúster RabbitMQ está caído o en estado `minority`, y el método `traducir()` en `RabbitAdminService` atrapó la excepción de AMQP mapeándola a un código semántico de alta resiliencia.
+* **3. Comando:** `curl -i -H "Authorization: Bearer <token_admin>" -X POST http://localhost:3020/v1/admin/queues -H "Content-Type: application/json" -d '{"name":"q.test"}'`.
+* **4. Cambio:** Ninguno en código; es el comportamiento de diseño correcto exigido por la rúbrica (IE17). El servicio protege la integridad del sistema sin arrojar errores no controlados.
+
+---
+
+### Caso 9 · `password authentication failed for user "vidalstore"` al recrear
+* **1. Síntoma:** `FATAL: password authentication failed for user "vidalstore"` en los logs de conexión de los microservicios.
+* **2. Hipótesis:** Se cambió la contraseña en el archivo `.env`, pero el volumen nombrado `postgres-data` ya fue inicializado con la contraseña anterior. Las variables `POSTGRES_PASSWORD` solo tienen efecto la primera vez que se crea el volumen.
+* **3. Comando:** `docker compose logs postgres | grep "database system was shut down"`.
+* **4. Cambio:** Restaurar la contraseña original en `.env` o, si es un entorno de pruebas, resetear el volumen con `docker compose down -v` y volver a levantar con `./start-all.sh`.
+
+---
+
+### Caso 10 · Vulnerabilidad BOLA/IDOR por lectura de identidad en el cuerpo
+* **1. Síntoma:** Un atacante envía `POST /v1/compras` con body `{"usuarioSub": "otro-uuid-victima"}` y logra comprar licencias a nombre de un tercero.
+* **2. Hipótesis:** El backend confía en los datos suministrados por el cliente en el `@Body()` en lugar de extraer la identidad criptográficamente validada del token JWT.
+* **3. Comando:** Inspeccionar el controlador en `compras.controller.ts` y verificar de dónde sale el parámetro de usuario.
+* **4. Cambio:** Aplicar la **Regla de Oro de Identidad**: extraer siempre el `usuarioSub` de `req.user.sub` (inyectado por el `AuthGuard` tras verificar la firma con JWKS), prohibiendo campos de identidad en DTOs de body o query.
+
+---
+

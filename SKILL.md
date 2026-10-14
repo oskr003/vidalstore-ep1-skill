@@ -148,24 +148,30 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - Cada cola de trabajo declara: `deadLetterExchange: 'vidalstore.dlx'` y `deadLetterRoutingKey: '<nombre_cola>'`.
     - **Orden estricto de declaración**: Las tres DLQ y sus bindings deben crearse ANTES que las colas de trabajo para evitar pérdidas silenciosas de descartes.
     - **Solución a `406 PRECONDITION_FAILED`**: Si una cola previa existía sin DLX, RabbitMQ no permite alterar sus argumentos; se eliminan con `rabbitmqctl delete_queue <nombre>` y se reinicia el worker.
-27. **Matriz de Decisión de Errores y Reintentos (L7 Tramo 4.8)**:
-    - **Error de mensaje** (JSON inválido, `SyntaxError`, SQLSTATE `22...` / `23...` de dato corrupto): `canal.nack(mensaje, false, false)` directo a la DLQ. Reintentar no sirve.
+27. **Matriz de Decisión de Errores, Reintentos y Topología de Colas (L7 Tramo 4.8)**:
+    - **No existen colas de reintento en RabbitMQ**: En el broker no se usan colas temporales tipo `q.*.retry` con TTL; los reintentos ocurren estrictamente en memoria dentro del worker (`conReintentos` / `procesarConReintentos`).
+    - **Error de mensaje** (JSON inválido, `SyntaxError`, SQLSTATE `22...` / `23...` de dato corrupto): `canal.nack(mensaje, false, false)` directo a la DLQ (`dlq.*`). Reintentar no sirve.
     - **Duplicado SQLSTATE `23505`** (`unique_violation` en `evento_id`): `canal.ack(mensaje)` y log de advertencia. El mensaje ya se persistió en una entrega anterior; NO va a la DLQ.
     - **Error de entorno / infraestructura** (Postgres caído, timeout, `ECONNREFUSED`): `conReintentos` hasta 3 veces con retroceso progresivo (2s, 4s); si se agotan, `canal.nack(mensaje, false, false)` hacia la DLQ.
+    - **Cola de Reprocesamiento (`q.reprocesar`)**: No es una cola de reintento automático, sino una cola dedicada de contingencia manual (Grupos de 3 / Semana 10) disparada desde `POST /v1/admin/dlq/:id/reproceso` en `vidalstore-admin`.
 28. **Consumidor de Cartas Muertas (`CartasMuertasConsumidor`) (L7 Tramo 5.1)**:
     - Un solo consumidor itera sobre `Object.values(DLQ)` consumiendo las 3 DLQs.
     - Extrae la cola de origen desde `x-first-death-queue` y el motivo desde `x-death[0].reason`.
     - Persiste en la tabla `mensajes_muertos` (la columna `payload` es **`text` obligatoria, JAMÁS `jsonb`**, para poder recibir JSON roto).
     - Recién tras el insert exitoso envía `canal.ack(mensaje)`. Si la base de datos falla al guardar la carta muerta, espera 5s y reencola con `canal.nack(mensaje, false, true)` para no perder el mensaje.
-29. **Persistencia Relacional con TypeORM y PostgreSQL (4 Tablas y 2 Dueños) (L7 Tramos 4 y 5)**:
-    - **Dueño 1 (`vidalstore-eventos` en esquema `public`)**:
+29. **Persistencia Relacional y Estrategia de ORM vs Conexión Directa (L7 Tramos 4 y 5)**:
+    - **Worker (`vidalstore-eventos` en esquema `public`) · SÍ usa ORM (TypeORM)**:
+      - Utiliza `@nestjs/typeorm` y `typeorm` con entidades decoradas, repositorios y migraciones versionadas (`synchronize: false`).
       - `eventos_auditoria`: `id uuid PK`, `routing_key text`, `evento_id uuid UNIQUE` (idempotencia), `usuario_sub text nullable`, `payload jsonb`, `emitido_en timestamptz`, `recibido_en timestamptz`.
       - `notificaciones`: `id uuid PK`, `para text`, `asunto text`, `estado text CHECK (estado IN ('enviada', 'fallida'))`, `evento_id uuid`, `enviada_en timestamptz`.
-      - `mensajes_muertos`: `id uuid PK`, `cola_origen text`, `routing_key text`, `motivo text`, `intentos int CHECK (intentos >= 1)`, `payload text`, `recibido_en timestamptz`.
-    - **Dueño 2 (Microservicio Productor de Licencias en esquema propio `licencias`)**:
-      - Tabla `licencias`: `id serial PK`, `juego_id int`, `usuario_sub text`, `estado text CHECK (estado IN ('activa', 'revocada'))`, `adquirida_en timestamptz`, `revocada_en timestamptz`, `revocada_por text`.
+      - `mensajes_muertos`: `id uuid PK`, `cola_origen text`, `routing_key text`, `motivo text`, `intentos int CHECK (intentos >= 1)`, `payload text`, `reprocesada boolean DEFAULT false`, `recibido_en timestamptz`.
+    - **Productor de Licencias (`vidalstore-backend` en esquema `licencias`) · NO usa ORM (Conexión Directa `pg.Pool`)**:
+      - Conexión directa nativa con `pg` (`node-postgres`) y `LicenciasDbService`.
+      - Tabla `licencias`: `id uuid PK`, `juego_id text`, `usuario_sub text`, `estado text CHECK (estado IN ('activa', 'revocada'))`, `precio_pagado numeric(10, 2)`, `creado_en timestamptz`.
       - **Índice parcial obligatorio**: `UNIQUE (usuario_sub, juego_id) WHERE estado = 'activa'` (permite volver a comprar si fue revocada; regla de Arturo en base de datos).
-      - Cero Foreign Keys entre servicios. Manejo de conexión con `pool.on('error', ...)` para evitar que reinicios de Postgres boten el proceso de Node.
+    - **Microservicio Administrador (`vidalstore-admin`) · NO usa ORM (Conexión Directa `pg.Pool`)**:
+      - Conexión nativa con `pg.Pool` en `RabbitAdminService` para auditar, borrar (`DELETE`) y marcar reproceso (`UPDATE mensajes_muertos SET reprocesada = true WHERE id = $1`) sin sobrecarga de ORM.
+    - Cero Foreign Keys entre servicios. Manejo de conexión con `pool.on('error', ...)` para evitar que reinicios de Postgres boten el proceso de Node.
 30. **Metodología Obligatoria: Plan de Implementación y Walkthrough Técnico (Skill Viva)**:
     - **Antes de codear**: Toda feature o rama de trabajo debe contar obligatoriamente con un **Plan de Implementación Formal** presentado como artefacto interactivo (`RequestFeedback: true`). Debe declarar: contexto de rúbrica (indicadores y %), diagrama Mermaid, fases atómicas paso a paso, contratos e interfaces TypeScript, política estricta de resiliencia y códigos HTTP (400, 404, 503, nunca 500 ciego), estrategia de pruebas en Vitest y propuesta de commits atómicos.
     - **Durante el trabajo**: Ejecución estrictamente atómica, validando tests en cada etapa y respetando la prohibición de tocar Git sin autorización explícita previa.

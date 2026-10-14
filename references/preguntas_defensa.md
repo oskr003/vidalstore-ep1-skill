@@ -117,6 +117,25 @@ Este documento consolida:
 
 ---
 
+### F.5. ¿El proyecto cuenta con colas de reintento en RabbitMQ? ¿Cómo se gestionan los reintentos y en qué se diferencian de las DLQ y de `q.reprocesar`?
+* **Respuesta Técnica**:
+  > "1. **No hay colas de reintento dentro de RabbitMQ**: En el broker no se crean colas intermedias con TTL (`q.*.retry`) que retornen mensajes en bucle a la cola operativa.  
+  > 2. **Los reintentos se resuelven en memoria en el worker**: La función `procesarConReintentos` (`vidalstore-eventos`) ejecuta un bucle en el proceso Node.js de hasta **3 intentos** con pausas progresivas (2s y 4s), reservado estrictamente para fallas transitorias del entorno (ej. Postgres reiniciándose o corte de red `ECONNREFUSED`). Los mensajes inválidos (JSON corrupto o violación de esquema) se descartan sin reintento alguno.  
+  > 3. **Desvío a DLQ**: Al agotar los 3 reintentos o detectar un mensaje corrupto, el worker ejecuta `canal.nack(mensaje, false, false)` sin reencolar. RabbitMQ activa los argumentos de Dead Lettering (`x-dead-letter-exchange: vidalstore.dlx`) y deposita el mensaje en su respectiva DLQ (`dlq.avisos`, `dlq.auditoria`, `dlq.correos`).  
+  > 4. **Diferencia con `q.reprocesar`**: La cola `q.reprocesar` **no es de reintento automático**, sino una cola dedicada de contingencia manual (requisito Grupos de 3). Se activa únicamente cuando un administrador autorizado invoca `POST /v1/admin/dlq/:id/reproceso` en `vidalstore-admin`; este microservicio lee la carta muerta de PostgreSQL, la republica en el DLX con routing key `dlq.reprocesar` y el worker la reenvía a la cola operativa original con trazabilidad forense."
+
+---
+
+### F.6. ¿Todos los microservicios se conectan a PostgreSQL mediante un ORM? Explica qué componente utiliza TypeORM y cuáles utilizan conexión directa con `pg.Pool` y por qué.
+* **Respuesta Técnica**:
+  > "No todos los microservicios usan ORM; existe una segregación arquitectónica según el rol de cada componente:  
+  > 1. **`vidalstore-eventos` (Worker) $\rightarrow$ Sí usa ORM (TypeORM)**: Cumple con la pauta de L7 y la EP2 configurando `TypeOrmModule` con entidades decoradas (`EventoAuditoria`, `MensajeMuerto`, `Notificacion`), repositorios inyectados y migraciones versionadas con `synchronize: false`. Modela el esquema relacional asíncrono y garantiza tipos como `jsonb` y `timestamptz`.  
+  > 2. **`vidalstore-backend` (Productor de Licencias) $\rightarrow$ No usa ORM, usa conexión directa (`pg.Pool`)**: Utiliza el driver nativo `node-postgres` en `LicenciasDbService`. Se diseñó así para desacoplar el ciclo de vida del productor del worker, optimizar el rendimiento transaccional en compras sincrónicas y gestionar directamente en SQL el índice parcial único `UNIQUE (usuario_sub, juego_id) WHERE estado = 'activa'`.  
+  > 3. **`vidalstore-admin` (Microservicio Administrador) $\rightarrow$ No usa ORM, usa conexión directa (`pg.Pool`)**: Utiliza `pg.Pool` nativo en `RabbitAdminService` para ejecutar consultas forenses sobre `mensajes_muertos`, borrado físico atómico (`DELETE ... WHERE id = $1`) y marcado de estado de reproceso (`UPDATE ... SET reprocesada = true`), sin la sobrecarga de un ORM completo.  
+  > 4. **`vidalstore-gateway` y `vidalstore-frontend`**: No acceden a base de datos (seguridad perimetral y SPA de cliente)."
+
+---
+
 ## Bloque G: Microservicio Administrador (`vidalstore-admin` · Oscar · IE6, IE7, IE8, IE17, IE18)
 
 ### G.1. ¿Cuál es la responsabilidad del microservicio `vidalstore-admin` (:3020) y cómo se integra en la arquitectura?
