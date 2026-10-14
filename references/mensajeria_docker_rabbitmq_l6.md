@@ -59,10 +59,15 @@ Cualquier implementación de productores y consumidores en los laboratorios o en
 * Si guardar y anunciar quedaran en dos procesos distintos (microservicio guarda y BFF publica), bastaría una caída de red entre ambos para tener un préstamo/licencia creado del que nadie se enteró.
 * **El usuarioSub sale del token**: El BFF reenvía el encabezado `Authorization`. El microservicio extrae la identidad del claim `sub` verificado. Un `usuarioSub` falso enviado en el cuerpo de la petición jamás llega al evento ni al registro.
 
-### Regla 3: Ningún nombre suelto: toda la topología en `topologia.ts` / `topologia.mjs`
+### Regla 3: Ningún nombre suelto: toda la topología en `topologia.ts`
 * La topología es el conjunto de exchanges, colas y bindings del sistema.
-* En el worker vive en `src/mensajeria/topologia.ts`.
-* En el productor vive en `servicios/mensajeria/topologia.mjs`.
+* **Distribución en el ecosistema VidalStore (EP2):**
+  * **`vidalstore-plataforma`**: Fuente de verdad canónica en `shared/topologia.ts` (y `scripts/bootstrap-topologia.ts`).
+  * **`vidalstore-backend`**: `src/mensajeria/topologia.ts` — Usado en `mensajeria/` (`MensajeriaProductorService` para publicar eventos como `EXCHANGES.EVENTOS.nombre`) y en `microservicios/biblioteca/` (`BibliotecaService` importa `ROUTING_KEYS.LICENCIA_REVOCADA` para publicar tras persistir en base de datos). Los demás módulos (`catalogo`, `compras`, `bff`) no usan AMQP.
+  * **`vidalstore-eventos`**: `src/mensajeria/topologia.ts` — Usado por los consumidores (`AuditoriaConsumidor`, `CorreosConsumidor`, `NotificacionesConsumidor`).
+  * **`vidalstore-admin`**: `src/mensajeria/topologia.ts` — Usado por el microservicio administrador para consultar métricas, declarar topología y gestionar DLQs.
+  * **`vidalstore-gateway` y `vidalstore-frontend`**: No usan `topologia.ts` (operan exclusivamente por HTTP/REST).
+* **Aislamiento y Regla de Copia Fiel**: Como cada repositorio se evalúa y clona de forma independiente, está prohibido importar archivos entre repositorios de forma relativa (`../../`). Se mantiene una réplica exacta de `topologia.ts` en cada repo que hable AMQP.
 * **Prohibido hardcodear strings en los consumidores o productores:**
   * Un nombre de exchange mal escrito genera: `Channel closed by server: 404 (NOT_FOUND) with message "NOT_FOUND - no exchange 'biblioteca.eventoss'"`.
   * Una letra errónea en un consumidor cierra el canal AMQP completo.

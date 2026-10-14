@@ -101,10 +101,15 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
 16. **El BFF Autoriza y Reenvía, pero JAMÁS Publica en el Broker (L6A Slide 6)**:
     - El BFF solo reenvía la cabecera `Authorization` hacia los microservicios.
     - El BFF no es dueño de la entidad ni de la transacción. Si el microservicio guardara y el BFF publicara, cualquier caída de red entre ambos generaría un recurso creado del que nadie se enteró.
-17. **Topología Centralizada: Ningún Nombre Suelto en el Código (L6A Slide 8, L6 Tramo 3.5)**:
-    - Toda la topología vive centralizada en `src/mensajeria/topologia.ts` (worker) y `servicios/mensajeria/topologia.mjs` (productor).
-    - Prohibido escribir strings mágicos o nombres de exchanges/colas a mano en consumidores o controladores.
-    - Un nombre de exchange con una letra errónea genera: `Channel closed by server: 404 (NOT_FOUND)` y mata el canal AMQP. Centralizar los objetos `EXCHANGES`, `COLAS`, `ROUTING_KEYS` y `BINDINGS` elimina este error por diseño.
+17. **Topología Centralizada: Ningún Nombre Suelto en el Código y Mapa por Repositorios (L6A Slide 8, L6 Tramo 3.5)**:
+    - **Prohibido hardcodear strings mágicos**: Ningún nombre de exchange, cola, DLQ o routing key se escribe a mano en controladores, servicios o consumidores. Un error tipográfico causa un fatal `Channel closed by server: 404 (NOT_FOUND)` cerrando el canal AMQP completo.
+    - **Distribución real en el ecosistema VidalStore EP2**:
+      - `vidalstore-plataforma`: **Fuente de verdad única** en `shared/topologia.ts` (y ejecutada por `scripts/bootstrap-topologia.ts`).
+      - `vidalstore-backend`: Copia en `src/mensajeria/topologia.ts`. Usado en el módulo `mensajeria/` (`MensajeriaProductorService` para declarar y publicar) y consumido directamente en el módulo de negocio `microservicios/biblioteca/` (`BibliotecaService` importa `ROUTING_KEYS.LICENCIA_REVOCADA` para publicar tras persistir). El resto de módulos (`catalogo`, `compras`, `auth`, `bff`) no interactúan con RabbitMQ.
+      - `vidalstore-eventos`: Copia en `src/mensajeria/topologia.ts`. Usado por todos los consumidores (`AuditoriaConsumidor`, `CorreosConsumidor`, `NotificacionesConsumidor`).
+      - `vidalstore-admin`: Copia en `src/mensajeria/topologia.ts`. Usado por el microservicio administrador para consultar métricas, declarar topología y gestionar DLQs.
+      - `vidalstore-gateway` y `vidalstore-frontend`: **No usan topología** (comunicación exclusiva HTTP/REST).
+    - **Aislamiento Estricto y Prohibición de Imports Cruzados**: Cada repositorio es autónomo y evaluado de forma aislada. Jamás usar imports relativos inter-repositorios (`../../vidalstore-plataforma/...`). La topología se sincroniza textualmente entre repositorios como copia fiel.
 18. **Criterio Sincrónico vs Encolado y la Regla del Botón COMPRAR (D7 Slides 13–15)**:
     - **Criterio de necesidad de resultado**: *¿El usuario necesita el resultado de esta operación para seguir?*
       - **Si SÍ**: Va **sincrónico** (`POST /v1/compras`). Responde `201 Created` informando que el recurso ya existe. Encolarlo significaría decirle "listo" sin que la licencia exista y sin que el juego aparezca en su biblioteca.
