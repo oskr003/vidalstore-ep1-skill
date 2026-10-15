@@ -434,10 +434,11 @@ Comprobar los 5 hitos fundamentales de la Semana 9:
    - **Inspección en RabbitMQ Management UI (`:15672`)**: Bajo ventana temporal `last hour`, se observa el pico de publicación en `vidalstore.eventos` y el pico de `Consumer ack` en `q.auditoria`.
 
 ### Paso 11: Puntos de Control y Verificación de L8 y L8A (Clúster, Quorum Queues, Administrador, Métricas y Políticas)
-1. **Autodescubrimiento del Clúster**: `docker compose up -d --wait` levanta ambos nodos; `rabbitmqctl cluster_status` muestra `rabbit@rabbit1` y `rabbit@rabbit2` en `Running Nodes` sin comandos manuales.
-2. **Quorum Queues y Prevención de 406**: Las 6 colas reportan tipo `quorum` en Management UI y `list_queues`. Si existían colas classic previas, fueron purgadas/borradas antes del up para evitar `406 PRECONDITION_FAILED`.
-3. **Resiliencia ante Caída de Nodo (Minority)**: Al detener `rabbit2` (`docker compose stop rabbit2`), `/api/queues` muestra `state: minority`; `rabbitmq-diagnostics check_if_node_is_quorum_critical` confirma salida 69 alertando nodo crítico. Al reencenderlo, Raft sincroniza sin pérdida de mensajes.
-4. **API del Microservicio Administrador (`:3020`)**: Ejecución de las 8 pruebas con `curl` documentadas en [cluster_y_microservicio_administrador_l8_l8a.md](./references/cluster_y_microservicio_administrador_l8_l8a.md#45-las-8-pruebas-obligatorias-de-la-api-del-administrador):
+1. **Autodescubrimiento del Clúster**: `rabbitmq/cluster.conf` con `classic_config` hacia `rabbit@rabbitmq1` y `rabbit@rabbitmq2`. Montado en `/etc/rabbitmq/conf.d/20-cluster.conf:ro`. `docker compose up -d --wait` levanta ambos nodos; `rabbitmqctl cluster_status` muestra `rabbit@rabbitmq1` y `rabbit@rabbitmq2` en `Running Nodes` sin comandos manuales.
+2. **Eliminación del Bloqueo Circular**: `rabbitmq2` arranca sin `depends_on: { rabbitmq1: { condition: service_healthy } }`. Ambos nodos inician en paralelo y sincronizan su estado vía Khepri/Raft.
+3. **Quorum Queues y Prevención de 406**: Las 6 colas reportan tipo `quorum` (`x-queue-type: quorum`) en Management UI y `list_queues`. Si existían colas classic previas, fueron purgadas/borradas antes del up para evitar `406 PRECONDITION_FAILED`.
+4. **Resiliencia ante Caída de Nodo (Minority)**: Al detener `rabbit2` (`docker compose stop rabbit2`), `/api/queues` muestra `state: minority`; `rabbitmq-diagnostics check_if_node_is_quorum_critical` confirma salida 69 alertando nodo crítico. Al reencenderlo, Raft sincroniza sin pérdida de mensajes.
+5. **API del Microservicio Administrador (`:3020`)**: Ejecución de las 8 pruebas con `curl` documentadas en [cluster_y_microservicio_administrador_l8_l8a.md](./references/cluster_y_microservicio_administrador_l8_l8a.md#45-las-8-pruebas-obligatorias-de-la-api-del-administrador):
    - Sin token $\rightarrow$ `401 Unauthorized`
    - Token de jugador $\rightarrow$ `403 Forbidden`
    - Body con campo desconocido $\rightarrow$ `400 Bad Request` (`forbidNonWhitelisted: true`)
@@ -446,8 +447,26 @@ Comprobar los 5 hitos fundamentales de la Semana 9:
    - Redeclarar con tipo classic $\rightarrow$ `409 Conflict` (`PRECONDITION_FAILED`)
    - Binding a cola inexistente $\rightarrow$ `404 Not Found`
    - Broker sin quórum o caído $\rightarrow$ `503 Service Unavailable`
-5. **Observabilidad y Escape `%2F`**: Consultas con autenticación Basic a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (con `%2F` codificado) y chequeo limpio en `/api/health/checks/alarms` (`{"status":"ok"}`).
-6. **Políticas de Retención en Repositorio**: `rabbitmq/politicas.json` montado en el compose y cargado con `import_definitions`. Comprobación con `list_policies` de `drop-head` para avisos y `reject-publish` para auditoría y DLQ.
+6. **Observabilidad y Escape `%2F`**: Consultas con autenticación Basic a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (con `%2F` codificado) y chequeo limpio en `/api/health/checks/alarms` (`{"status":"ok"}`).
+7. **Políticas de Retención en Repositorio (IE19)**: `rabbitmq/politicas.json` versionado con 3 políticas (`retencion-avisos`, `retencion-trabajo`, `retencion-dlq`) con desbordes `drop-head` y `reject-publish`, montado en `/etc/rabbitmq/politicas.json:ro` e importado idempotentemente con `scripts/rabbitmq-policies.sh`.
+
+### Paso 12: Suite de Motores de Auditoría Automatizados y Pruebas Unitarias del Ecosistema
+La skill cuenta con 4 motores de auditoría estricta ejecutables desde la raíz del proyecto:
+1. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_ep1.py`**:
+   - Audita los 146 commits del historial, tokens en `sessionStorage`, lista blanca del frontend, validación JWKS en API Gateway (:8080) e idempotencia en compras.
+2. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_l6.py`**:
+   - Valida la topología centralizada en `topologia.ts`, el cumplimiento de la Regla 2 (el BFF no importa `amqplib` ni publica directamente), y la documentación de arquitectura en `vidalstore-plataforma/docs/`.
+3. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_l7.py`**:
+   - Valida healthchecks encadenados, topología DLX y las 3 DLQs, control de flujo con `prefetch(1)`, captura de SQLSTATE `23505` con `ack()` defensivo para idempotencia, y descarte de veneno con `nack(false, false)`.
+4. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_l8.py`**:
+   - Valida clúster RabbitMQ de 2 nodos con autodescubrimiento `cluster.conf`, ausencia de `depends_on` circular en `rabbitmq2`, Quorum Queues, microservicio administrador con canal protegido y traducción semántica, y políticas de retención versionadas en `politicas.json`.
+5. **Batería de Pruebas Unitarias (209 / 209 Aprobadas - 100%)**:
+   - `vidalstore-admin`: `npm test` (89 tests Vitest)
+   - `vidalstore-backend`: `npm test` (72 tests Jest)
+   - `vidalstore-eventos`: `npm test` (22 tests Vitest)
+   - `vidalstore-gateway`: `npm test` (19 tests Jest)
+   - `vidalstore-frontend`: `npm run test -- --watch=false` (6 tests Karma)
+   - `vidalstore-plataforma`: `npm test` (1 test Vitest)
 
 ---
 

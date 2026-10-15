@@ -71,10 +71,10 @@ def audit_cluster_config():
     
     if cluster_conf:
         content = read_content(cluster_conf)
-        if "rabbit_peer_discovery_classic_config" in content and "rabbit@rabbit1" in content and "rabbit@rabbit2" in content:
+        if ("classic_config" in content or "rabbit_peer_discovery_classic_config" in content) and ("rabbit@rabbitmq1" in content or "rabbit@rabbit1" in content):
             check_pass(f"Archivo de clúster encontrado con descubrimiento clásico automático ({os.path.relpath(cluster_conf, BASE_DIR)})")
         else:
-            check_warn(f"cluster.conf presente pero faltan directivas de nodos rabbit@rabbit1 y rabbit@rabbit2")
+            check_warn(f"cluster.conf presente pero faltan directivas de nodos rabbit@rabbitmq1 y rabbit@rabbitmq2")
     else:
         check_fail("No se encontró archivo rabbitmq/cluster.conf para autodescubrimiento sin comandos manuales",
                    "Crear rabbitmq/cluster.conf con classic_config apuntando a rabbit@rabbit1 y rabbit@rabbit2.")
@@ -99,7 +99,7 @@ def audit_cluster_config():
             check_fail("Falta RABBITMQ_ERLANG_COOKIE en las variables de entorno de rabbit1 y rabbit2")
 
         # Verificar ausencia de depends_on circular/deadlock en rabbit2
-        r2_match = re.search(r'(rabbit2|rabbitmq2):.*?(?=^[a-zA-Z0-9_-]+:|\Z)', c_content, re.DOTALL | re.MULTILINE)
+        r2_match = re.search(r'^\s+(rabbit2|rabbitmq2):.*?(?=^\s{2}[a-zA-Z0-9_-]+:|\Z)', c_content, re.DOTALL | re.MULTILINE)
         if r2_match:
             r2_block = r2_match.group(0)
             if "depends_on" in r2_block and "condition: service_healthy" in r2_block:
@@ -232,7 +232,7 @@ def audit_policies():
 
 def audit_hygiene():
     print_header("5. HIGIENE DE SECRETOS Y VARIABLES DE ENTORNO")
-    env_example = find_file(".env.example")
+    env_example = find_file(".env.example", [os.path.join(BASE_DIR, "vidalstore-plataforma"), BASE_DIR])
     if env_example:
         content = read_content(env_example)
         if "RABBITMQ_COOKIE" in content or "RABBIT_URL" in content:

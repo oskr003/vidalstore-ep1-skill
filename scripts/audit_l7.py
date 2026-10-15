@@ -101,11 +101,12 @@ def audit_compose():
         check_warn("Verificar nombres de volúmenes persistentes en compose.yml.")
 
     # Hostname fijo
-    if "rabbit1" in content and ("hostname: rabbit1" in content or "hostname: 'rabbit1'" in content):
-        check_pass("Hostname fijo 'rabbit1' configurado en el servicio del broker.")
+    if ("hostname: rabbit1" in content or "hostname: 'rabbit1'" in content or
+        "hostname: rabbitmq1" in content or "hostname: 'rabbitmq1'" in content):
+        check_pass("Hostname fijo ('rabbit1' o 'rabbitmq1') configurado en el servicio del broker.")
     else:
-        check_fail("Falta 'hostname: rabbit1' en el servicio de RabbitMQ.",
-                   "Agregar 'hostname: rabbit1' para que el nodo Erlang conserve Mnesia (D7 Slide 11).")
+        check_fail("Falta 'hostname: rabbit1' o 'rabbitmq1' en el servicio de RabbitMQ.",
+                   "Agregar hostname fijo para que el nodo Erlang conserve Mnesia (D7 Slide 11).")
 
 def audit_topology():
     print_header("2. AUDITORÍA DE TOPOLOGÍA AMQP, DLX Y 3 DLQS (L7 Tramo 3)")
@@ -165,19 +166,22 @@ def audit_consumers():
 
     # AuditoriaConsumidor y manejo de 23505
     auditoria_cons = find_file("auditoria.consumidor.ts")
-    if auditoria_cons:
-        a_content = read_content(auditoria_cons)
-        if "23505" in a_content:
-            check_pass("Captura de código 23505 (unique_violation) con canal.ack(mensaje) para idempotencia.")
-        else:
-            check_fail("AuditoriaConsumidor no maneja el código de error 23505.",
-                       "Capturar error 23505 y confirmar con canal.ack(mensaje) sin mandar a DLQ (L7 Tramo 4.8).")
+    procesar_auditoria = find_file("procesar-evento-auditoria.ts")
+    reintentos_file = find_file("reintentos.ts")
 
-        if "nack" in a_content and "false, false" in a_content:
-            check_pass("Rechazo nack(mensaje, false, false) configurado hacia la DLQ.")
-        else:
-            check_fail("Falta canal.nack(mensaje, false, false) en el catch de error del mensaje.",
-                       "Rechazar mensajes corruptos con nack sin reencolar para que viajen al DLX (L7 Tramo 3.6).")
+    a_content = read_content(auditoria_cons) + "\n" + read_content(procesar_auditoria)
+    if "23505" in a_content:
+        check_pass("Captura de código 23505 (unique_violation) con canal.ack(mensaje) para idempotencia.")
+    else:
+        check_fail("AuditoriaConsumidor no maneja el código de error 23505.",
+                   "Capturar error 23505 y confirmar con canal.ack(mensaje) sin mandar a DLQ (L7 Tramo 4.8).")
+
+    r_content = a_content + "\n" + read_content(reintentos_file)
+    if "nack" in r_content and "false, false" in r_content:
+        check_pass("Rechazo nack(mensaje, false, false) configurado hacia la DLQ.")
+    else:
+        check_fail("Falta canal.nack(mensaje, false, false) en el catch de error del mensaje.",
+                   "Rechazar mensajes corruptos con nack sin reencolar para que viajen al DLX (L7 Tramo 3.6).")
 
 def audit_persistence():
     print_header("4. AUDITORÍA DE MODELO DE DATOS Y TYPEORM (L7 Tramos 4 y 5)")

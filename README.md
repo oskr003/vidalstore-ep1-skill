@@ -552,3 +552,33 @@ El Laboratorio L8 y su clase pre-laboratorio L8A cierran la Unidad 2 cubriendo e
    - Políticas versionadas en `rabbitmq/politicas.json` y cargadas en Compose con `rabbitmqctl import_definitions`.
 * Guía de referencia detallada disponible en: [`references/cluster_y_microservicio_administrador_l8_l8a.md`](./references/cluster_y_microservicio_administrador_l8_l8a.md).
 
+---
+
+## 16. Suite de Auditoría Automatizada (audit_ep1.py, audit_l6.py, audit_l7.py, audit_l8.py)
+
+Para verificar el cumplimiento del 100% de la rúbrica y las reglas de las clases D6 a D9 y L6 a L8A, la skill provee 4 scripts de auditoría automática en `scripts/`:
+
+```bash
+# 1. Auditoría de Cadena Sincrónica EP1 (146 commits, 4 capas, JWKS, sessionStorage, higiene)
+python3 .agents/skills/vidalstore-ep1/scripts/audit_ep1.py
+
+# 2. Auditoría L6: Topología centralizada y regla de broker (el BFF no importa amqplib)
+python3 .agents/skills/vidalstore-ep1/scripts/audit_l6.py
+
+# 3. Auditoría L7: Docker Compose, DLX, 3 DLQs, prefetch(1), idempotencia 23505 y TypeORM
+python3 .agents/skills/vidalstore-ep1/scripts/audit_l7.py
+
+# 4. Auditoría L8 / L8A: Clúster 2 nodos (cluster.conf), sin bloqueo circular, Quorum Queues y Admin
+python3 .agents/skills/vidalstore-ep1/scripts/audit_l8.py
+```
+
+### Resultados de la Batería Completa de Tests (209 Tests Aprobados · 100%)
+- `vidalstore-admin`: 89 tests (Vitest 4.1.11)
+- `vidalstore-backend`: 72 tests (Jest / NestJS)
+- `vidalstore-eventos`: 22 tests (Vitest 4.1.11)
+- `vidalstore-gateway`: 19 tests (Jest / NestJS)
+- `vidalstore-frontend`: 6 tests (Angular / Karma)
+- `vidalstore-plataforma`: 1 test (Docker Compose YAML)
+- **Total acumulado**: **209 / 209 pruebas aprobadas al 100%**.
+
+
