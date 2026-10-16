@@ -95,8 +95,8 @@ def audit_compose():
                    "Atar depends_on con 'condition: service_healthy' para evitar caídas por carrera al arrancar (L7 Tramo 1.6).")
 
     # Volúmenes nombrados
-    if "datos-rabbit" in content and "datos-postgres" in content:
-        check_pass("Volúmenes con nombre 'datos-rabbit' y 'datos-postgres' presentes.")
+    if ("datos-rabbit" in content and "datos-postgres" in content) or ("rabbitmq1-data" in content and "postgres-data" in content):
+        check_pass("Volúmenes persistentes nombrados (RabbitMQ y PostgreSQL) presentes en compose.yml.")
     else:
         check_warn("Verificar nombres de volúmenes persistentes en compose.yml.")
 
@@ -109,8 +109,8 @@ def audit_compose():
                    "Agregar hostname fijo para que el nodo Erlang conserve Mnesia (D7 Slide 11).")
 
 def audit_topology():
-    print_header("2. AUDITORÍA DE TOPOLOGÍA AMQP, DLX Y 3 DLQS (L7 Tramo 3)")
-    topo_ts = find_file("topologia.ts")
+    print_header("2. AUDITORÍA DE TOPOLOGÍA AMQP, DLX Y 3 DLQS (L7 Tramo 3 & EP2 §4.1)")
+    topo_ts = find_file("topologia.ts", [os.path.join(BASE_DIR, "vidalstore-plataforma"), os.path.join(BASE_DIR, "vidalstore-eventos"), BASE_DIR])
     topo_mjs = find_file("topologia.mjs")
 
     if not topo_ts and not topo_mjs:
@@ -140,9 +140,20 @@ def audit_topology():
     if "DLQ" in content and pos_dlq != -1:
         check_pass("Configuración de colas DLQ detectada en declararTopologia.")
 
+    # Verificación de reglas "No se negocia" de EP2-Caso-VidalStore.pdf pág. 12 y 14
+    if "'#'" in content or '"#"' in content:
+        check_pass("Binding '#' para la cola de auditoría presente (EP2-Caso-VidalStore.pdf pág. 12 y 14: No se negocia).")
+    else:
+        check_warn("EP2-Caso-VidalStore.pdf (pág. 12 y 14, 'No se negocia') exige que la cola de auditoría esté atada con '#' a vidalstore.eventos.",
+                   "Actualmente usa PATRONES_EVENTOS (['#.realizada', '#.revocada', '#.publicado']). Cambiar el binding de q.auditoria a '#'.")
+
+    if "bindQueue(dlq, EXCHANGES.DLX.nombre, dlq)" in content or "'x-dead-letter-routing-key': dlq" in content:
+        check_warn("En topologia.ts las DLQ están atadas al DLX con el nombre de la DLQ ('dlq.*').",
+                   "EP2-Caso-VidalStore.pdf (pág. 12 y 14, 'No se negocia') pide que cada DLQ esté atada al DLX con el nombre de su propia cola de trabajo ('q.*').")
+
 def audit_consumers():
     print_header("3. AUDITORÍA DE CONSUMIDORES, PREFETCH, ACK Y REINTENTOS (D8 & L7 Tramos 2, 4 y 5)")
-    mensajeria_svc = find_file("mensajeria.service.ts")
+    mensajeria_svc = find_file("mensajeria.service.ts", [os.path.join(BASE_DIR, "vidalstore-eventos"), BASE_DIR])
     if mensajeria_svc:
         m_content = read_content(mensajeria_svc)
         if "prefetch(1)" in m_content:
@@ -150,6 +161,9 @@ def audit_consumers():
         else:
             check_fail("Falta 'await this.canal.prefetch(1)' en MensajeriaService.",
                        "Agregar 'await this.canal.prefetch(1)' inmediatamente al crear el canal (L7 Tramo 2.4).")
+        if "sendToQueue(" in m_content:
+            check_warn("Se detectó 'sendToQueue(' en MensajeriaService de vidalstore-eventos (usa el exchange por defecto '').",
+                       "EP2-Caso-VidalStore.pdf (pág. 15 y §4.9 pág. 25) prohíbe usar el exchange por defecto ''; el reproceso debe publicar en el exchange original con su routing key original.")
 
     # CartasMuertasConsumidor
     cartas_muertas = find_file("cartas-muertas.consumidor.ts")
@@ -214,7 +228,8 @@ def audit_persistence():
         check_warn("No se encontró mensaje-muerto.entity.ts.")
 
     # Productor con índice parcial y pool error
-    repo_prod = find_file("repositorio-prestamos.mjs") or find_file("repositorio-licencias.mjs") or find_file("licencias.service.ts")
+    repo_prod = (find_file("licencias-db.service.ts") or find_file("repositorio-prestamos.mjs") or
+                 find_file("repositorio-licencias.mjs") or find_file("licencias.service.ts"))
     if repo_prod:
         p_content = read_content(repo_prod)
         if "WHERE estado =" in p_content or "where: \"estado =" in p_content or "where: 'estado =" in p_content:
@@ -233,8 +248,9 @@ def audit_docs():
     if modelo_md:
         check_pass(f"docs/modelo-de-datos.md encontrado: {os.path.relpath(modelo_md, BASE_DIR)}")
         m_content = read_content(modelo_md)
-        if "EVENTOS_AUDITORIA" in m_content and ("PRESTAMOS" in m_content or "LICENCIAS" in m_content):
-            check_pass("Diagrama ER documenta los dos dueños (worker y microservicio productor).")
+        m_upper = m_content.upper()
+        if "EVENTOS_AUDITORIA" in m_upper and ("PRESTAMOS" in m_upper or "LICENCIAS" in m_upper):
+            check_pass("Diagrama ER documenta las 4 tablas y los dos dueños (worker y microservicio productor).")
         else:
             check_warn("docs/modelo-de-datos.md debe mostrar las 4 tablas separadas por dueño (L7 Tramo 5.3).")
     else:
@@ -242,12 +258,16 @@ def audit_docs():
                    "Crear docs/modelo-de-datos.md con el diagrama entidad-relación de 4 tablas (L7 Tramo 4.10).")
 
     readme_plat = find_file("README.md", [os.path.join(BASE_DIR, "vidalstore-plataforma"), os.path.join(BASE_DIR, "biblioteca-plataforma")])
+    topo_md = find_file("topologia.md", [os.path.join(BASE_DIR, "vidalstore-plataforma")])
     if readme_plat:
         r_content = read_content(readme_plat)
-        if "Mensaje envenenado" in r_content or "envenenado" in r_content.lower():
-            check_pass("Sección 'Mensaje envenenado' documentada en README de la plataforma.")
+        t_content = read_content(topo_md)
+        if "envenenado" in r_content.lower() or "roto" in r_content.lower() or "--roto" in r_content.lower():
+            check_pass("Prueba del mensaje envenenado documentada en el README de la plataforma.")
+        elif "envenenado" in t_content.lower() or "--roto" in t_content.lower():
+            check_warn("La prueba del mensaje envenenado está en docs/topologia.md, pero EP2-Caso-VidalStore.pdf (§4.8 pág. 24) pide incluir el comando también en el README.md de vidalstore-plataforma.")
         else:
-            check_warn("El README de la plataforma debe documentar la prueba del mensaje envenenado (L7 Tramo 3.7).")
+            check_warn("El README de la plataforma debe documentar el comando de prueba del mensaje envenenado (EP2 §4.8 pág. 24).")
 
 def main():
     print(f"\n{BOLD}{GREEN}AUDITORÍA TÉCNICA · DSY1107 SEMANA 9 (D8, L7A Y L7){RESET}")

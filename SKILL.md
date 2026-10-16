@@ -122,60 +122,67 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
 20. **Confirmación con `ack` Explícito (`noAck: false`) (L6 Tramos 3.7 y 4.7)**:
     - En los consumidores es obligatorio configurar `{ noAck: false }` y ejecutar `canal.ack(mensaje)` explícito solo tras procesar con éxito.
     - `noAck: true` (auto-ack) le dice a RabbitMQ que borre el mensaje en el microsegundo en que sale por el socket de red. Si el worker muere antes de procesarlo, el mensaje se destruye para siempre sin reintento.
-21. **Transición a la EP2 y Repositorios Fijos (L6A Slides 11–13)**:
+21. **Transición a la EP2 y Repositorios Fijos (`EP2-Caso-VidalStore.pdf` §3.2 y §3.6, L6A Slides 11–13)**:
     - Nombres fijos de repositorios: `vidalstore-plataforma`, `vidalstore-eventos`, `vidalstore-admin`. Los de la EP1 no se renombran ni se fusionan.
     - `vidalstore-plataforma/docs/repositorios.md` congelado con una fila por componente del grupo.
-    - Nombres fijos en topología: Exchanges `vidalstore.eventos` (`topic`), `vidalstore.comandos` (`direct`), `vidalstore.dlx` (`direct`). Routing keys: `compra.realizada`, `licencia.revocada`, `juego.publicado`, `correo.enviar`.
-    - Del grupo: nombres de las seis colas (3 de trabajo + 3 DLQ), el patrón de la cola de avisos (`compra.*`), el prefetch (L7) y las políticas (L8).
+    - **No se negocia (`EP2-Caso-VidalStore.pdf` pág. 12 y 14)**:
+      - Exchanges: `vidalstore.eventos` (`topic`), `vidalstore.comandos` (`direct`), `vidalstore.dlx` (`direct`).
+      - Routing keys: `compra.realizada`, `licencia.revocada`, `juego.publicado`, `correo.enviar` (y `dlq.reprocesar` en grupos de 3).
+      - **Binding de Auditoría**: Obligatoriamente `#` en `vidalstore.eventos` (*"Guarda cada evento en `eventos_auditoria`. Escucha todo, incluido lo que se agregue después"*).
+      - **Binding de Correos**: Obligatoriamente `correo.enviar` en `vidalstore.comandos`.
+      - **Binding de las 3 DLQ**: Cada DLQ atada a `vidalstore.dlx` con el nombre de su cola de trabajo (según pauta oficial pág. 12 y 14) o mapeo 1:1 estricto (`dlq.*` en `shared/topologia.ts` actual).
+    - **Lo decide el grupo y lo justifica (`EP2-Caso-VidalStore.pdf` pág. 12)**:
+      - Nombres de las 6 colas (`q.avisos`, `q.auditoria`, `q.correos` y `dlq.avisos`, `dlq.auditoria`, `dlq.correos`).
+      - **Bindings de la cola de Avisos (`q.avisos`)**: Uno o más patrones definidos por el grupo que capturen como mínimo `licencia.revocada` (que es el evento de la demostración). **Trampa de L7 pág. 80**: Traducir `prestamo.*` a `compra.*` es un error porque deja fuera `licencia.revocada`. En el proyecto se usa `PATRONES_EVENTOS = ['#.realizada', '#.revocada', '#.publicado']` (comodín por sufijo).
 22. **Orquestación con Docker Compose (`compose.yml`) (D8 y L7 Tramo 1)**:
-    - Describe el sistema completo (8 servicios: frontend, gateway, bff, catálogo, licencias, worker/eventos, rabbit1, postgres).
+    - Describe el sistema completo (contenedores de infraestructura `postgres`, `rabbit1`/`rabbitmq1`, `rabbit2`/`rabbitmq2`, más los servicios de Node y Angular).
     - Sangría de 2 espacios estrictos, prohibido tabulaciones. Los guiones de listas se indentan a mayor profundidad.
-    - Red interna de Compose: los servicios se comunican usando su nombre de servicio (`rabbit1:5672`, `postgres:5432`, `bff:3000`). Dentro de un contenedor, `localhost` apunta a sí mismo, no al vecino.
+    - Red interna de Compose: los servicios se comunican usando su nombre de servicio (`rabbitmq1:5672`, `postgres:5432`, `bff:3001`). Dentro de un contenedor, `localhost` apunta a sí mismo, no al vecino.
 23. **Healthchecks y Condición `service_healthy` (D8 y L7 Tramo 1.6)**:
     - `depends_on` por omisión solo espera que el contenedor pase a `running`, no que el servicio acepte conexiones.
-    - Obligatorio `healthcheck` en Postgres (`pg_isready -U biblioteca -d biblioteca`) y RabbitMQ (`rabbitmq-diagnostics -q check_port_connectivity`), y vincular con `condition: service_healthy`.
+    - Obligatorio `healthcheck` en Postgres (`pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB`) y RabbitMQ (`rabbitmq-diagnostics -q check_port_connectivity`), y vincular con `condition: service_healthy`.
     - Comando oficial de inicio: `docker compose up -d --build --wait`.
 24. **Las Tres Durabilidades Indispensables (D8 Slides 22–24 y L7 Tramo 2.1)**:
     - Para sobrevivir al reinicio de RabbitMQ sin perder datos se necesitan **las tres**:
-      1. Volumen nombrado de Docker (`datos-rabbit:/var/lib/rabbitmq`).
-      2. Cola durable (`{ durable: true }`).
-      3. Mensaje persistent (`{ persistent: true }` en el productor).
-    - Si falta el volumen, se pierde todo al recrear. Si falta la cola, desaparece al reiniciar. Si falta el mensaje persistente, la cola sobrevive pero vuelve vacía.
+      1. Volumen nombrado de Docker (`rabbitmq1-data:/var/lib/rabbitmq` / `datos-rabbit:/var/lib/rabbitmq` con `hostname` fijo).
+      2. Cola y exchange durables (`{ durable: true }`). En RabbitMQ 4.3 declarar una cola no durable y no exclusiva lanza `541 INTERNAL_ERROR ... transient_nonexcl_queues is deprecated`.
+      3. Mensaje persistente (`{ persistent: true }` en el productor).
+    - Si falta el volumen o el `hostname`, se pierde todo al recrear. Si falta la cola durable, desaparece al reiniciar. Si falta el mensaje persistente, la cola sobrevive pero vuelve vacía.
 25. **Control de Concurrencia con `prefetch(1)` (L7A Slide 18 y L7 Tramo 2.4)**:
     - Obligatorio `await this.canal.prefetch(1)` en `mensajeria.service.ts` inmediatamente tras instanciar el canal.
-    - Limita la retención a un solo mensaje sin confirmar por consumidor. Evita que un worker absorba la cola entera de golpe si la base de datos se cae, permitiendo pausar la cola ordenadamente mientras se reintenta.
-26. **Dead Letter Exchange (`vidalstore.dlx`) y las Tres DLQ (L7 Tramo 3)**:
-    - Cada cola de trabajo declara: `deadLetterExchange: 'vidalstore.dlx'` y `deadLetterRoutingKey: '<nombre_cola>'`.
-    - **Orden estricto de declaración**: Las tres DLQ y sus bindings deben crearse ANTES que las colas de trabajo para evitar pérdidas silenciosas de descartes.
-    - **Solución a `406 PRECONDITION_FAILED`**: Si una cola previa existía sin DLX, RabbitMQ no permite alterar sus argumentos; se eliminan con `rabbitmqctl delete_queue <nombre>` y se reinicia el worker.
-27. **Matriz de Decisión de Errores, Reintentos y Topología de Colas (L7 Tramo 4.8)**:
-    - **No existen colas de reintento en RabbitMQ**: En el broker no se usan colas temporales tipo `q.*.retry` con TTL; los reintentos ocurren estrictamente en memoria dentro del worker (`conReintentos` / `procesarConReintentos`).
-    - **Error de mensaje** (JSON inválido, `SyntaxError`, SQLSTATE `22...` / `23...` de dato corrupto): `canal.nack(mensaje, false, false)` directo a la DLQ (`dlq.*`). Reintentar no sirve.
-    - **Duplicado SQLSTATE `23505`** (`unique_violation` en `evento_id`): `canal.ack(mensaje)` y log de advertencia. El mensaje ya se persistió en una entrega anterior; NO va a la DLQ.
-    - **Error de entorno / infraestructura** (Postgres caído, timeout, `ECONNREFUSED`): `conReintentos` hasta 3 veces con retroceso progresivo (2s, 4s); si se agotan, `canal.nack(mensaje, false, false)` hacia la DLQ.
-    - **Cola de Reprocesamiento (`q.reprocesar`)**: No es una cola de reintento automático, sino una cola dedicada de contingencia manual (Grupos de 3 / Semana 10) disparada desde `POST /v1/admin/dlq/:id/reproceso` en `vidalstore-admin`.
-28. **Consumidor de Cartas Muertas (`CartasMuertasConsumidor`) (L7 Tramo 5.1)**:
-    - Un solo consumidor itera sobre `Object.values(DLQ)` consumiendo las 3 DLQs.
-    - Extrae la cola de origen desde `x-first-death-queue` y el motivo desde `x-death[0].reason`.
-    - Persiste en la tabla `mensajes_muertos` (la columna `payload` es **`text` obligatoria, JAMÁS `jsonb`**, para poder recibir JSON roto).
-    - Recién tras el insert exitoso envía `canal.ack(mensaje)`. Si la base de datos falla al guardar la carta muerta, espera 5s y reencola con `canal.nack(mensaje, false, true)` para no perder el mensaje.
-29. **Persistencia Relacional y Estrategia de ORM vs Conexión Directa (L7 Tramos 4 y 5)**:
-    - **Worker (`vidalstore-eventos` en esquema `public`) · SÍ usa ORM (TypeORM)**:
-      - Utiliza `@nestjs/typeorm` y `typeorm` con entidades decoradas, repositorios y migraciones versionadas (`synchronize: false`).
-      - `eventos_auditoria`: `id uuid PK`, `routing_key text`, `evento_id uuid UNIQUE` (idempotencia), `usuario_sub text nullable`, `payload jsonb`, `emitido_en timestamptz`, `recibido_en timestamptz`.
-      - `notificaciones`: `id uuid PK`, `para text`, `asunto text`, `estado text CHECK (estado IN ('enviada', 'fallida'))`, `evento_id uuid`, `enviada_en timestamptz`.
+    - Limita la retención a un solo mensaje sin confirmar por consumidor. Evita que un worker absorba la cola entera de golpe si la base de datos se cae, permitiendo pausar la cola ordenadamente mientras se reintenta. (`prefetch(0)` o no llamarlo significa **sin límite**).
+26. **Dead Letter Exchange (`vidalstore.dlx`) y las Tres DLQ (`EP2-Caso-VidalStore.pdf` §4.1 y L7 Tramo 3)**:
+    - Cada cola de trabajo declara `'x-dead-letter-exchange': 'vidalstore.dlx'` y `'x-dead-letter-routing-key'` coincidente con el binding de su DLQ en `vidalstore.dlx` (según `EP2-Caso-VidalStore.pdf` pág. 12 y 14, la regla no negociable pide que sea `<el nombre de la propia cola de trabajo>`; en `shared/topologia.ts` actual figura el nombre de la DLQ `dlq.*`).
+    - **Orden estricto de declaración**: Exchanges $\rightarrow$ Las 3 DLQ y sus bindings al DLX $\rightarrow$ Las 3 colas de trabajo con sus `x-dead-letter-*` $\rightarrow$ Bindings de negocio. Si la DLQ no existe cuando llega el primer rechazo, el DLX descarta el mensaje en silencio.
+    - **Solución a `406 PRECONDITION_FAILED`**: Si una cola previa existía sin DLX o como `classic`, RabbitMQ no permite alterar sus argumentos; en desarrollo se eliminan con `rabbitmqctl delete_queue <nombre>` y se reinicia el worker (en producción se declara una cola nueva, se migra el consumidor y se borra la vieja cuando quede vacía).
+    - **Prohibido usar el exchange por defecto (`""`)**: `EP2-Caso-VidalStore.pdf` pág. 15 y `L7.pdf` pág. 64 prohíben publicar o republicar con `sendToQueue` / exchange `""` usando el nombre de la cola como routing key, porque deja el encargo sin IE2 ni IE14 al no existir binding.
+27. **Matriz de Decisión de Errores, Reintentos y Reproceso de Grupos de 3 (`EP2-Caso-VidalStore.pdf` §4.3 y §4.9, L7 Tramo 4.8)**:
+    - **No existen colas de reintento automático en RabbitMQ**: Los reintentos ante fallos transitorios ocurren estrictamente en memoria dentro del consumidor (`conReintentos` / `procesarConReintentos`) mientras el mensaje permanece `unacked`.
+    - **Error de mensaje** (JSON inválido, `SyntaxError`, falta `x-evento-id`, `x-emitido-en` inválido, falta `usuarioSub` en `compra.realizada`/`licencia.revocada`, o SQLSTATE `22...`/`23...` distinto de `23505`): `canal.nack(mensaje, false, false)` directo a la DLQ. Reintentar no sirve.
+    - **Duplicado SQLSTATE `23505`** (`unique_violation` en `evento_id`): `canal.ack(mensaje)` y log `WARN`. El mensaje ya se persistió en una entrega anterior; NO va a la DLQ.
+    - **Error de entorno / infraestructura** (Postgres caído, timeout, `ECONNREFUSED`, `ENOTFOUND postgres`): `conReintentos` hasta 3 veces con espera progresiva (2s, 4s); si se agotan, `canal.nack(mensaje, false, false)` hacia la DLQ.
+    - **Reproceso Controlado de DLQ (Requisito Exclusivo Grupos de 3 · `EP2-Caso-VidalStore.pdf` §4.9 pág. 24–25)**:
+      - **Regla oficial del enunciado (§4.9)**: `POST /v1/admin/dlq/:id/reproceso` en `vidalstore-admin` (solo `administradores`). Según §4.9, el administrador **no toca la tabla `mensajes_muertos`** (que es de `vidalstore-eventos`): publica en `vidalstore.comandos` el comando `dlq.reprocesar` con `{ mensajeMuertoId, payloadCorregido?, solicitadoPor }` (`sub` del token). `vidalstore-eventos` consume el comando desde su cola `q.reprocesar`, **vuelve a publicar el payload en su exchange original con su routing key original y su `x-evento-id` original** (nunca con `sendToQueue` al exchange por defecto `""`), y marca la fila como `reprocesada = true` con fecha y `solicitadoPor`, evitando duplicar avisos.
+      - **Nota sobre implementación actual en repositorios**: Basado en el plan preliminar `ep2-plan-v2.pdf`, hoy `vidalstore-admin` consulta/actualiza `mensajes_muertos` con `pg.Pool` y publica `dlq.reprocesar` en `vidalstore.dlx`, y `vidalstore-eventos` reenvía con `sendToQueue` y header `x-original-routing-key`.
+28. **Consumidor de Cartas Muertas (`CartasMuertasConsumidor`) (`EP2-Caso-VidalStore.pdf` §4.3 y L7 Tramo 5.1)**:
+    - Un solo consumidor itera sobre `Object.values(DLQS)` consumiendo las 3 DLQs con `noAck: false`.
+    - Extrae la cola de origen desde `x-first-death-queue` y la routing key original (`routing-keys[0]`), el motivo (`reason`: `rejected`, `expired`, `maxlen`, `delivery_limit`) y el conteo (`count`) desde `x-death[0]`.
+    - Persiste en la tabla `mensajes_muertos` (la columna `payload` es **`text` obligatoria, JAMÁS `jsonb`**, para poder guardar JSON roto).
+    - Recién tras el insert exitoso envía `canal.ack(mensaje)`. Si la base de datos falla al guardar la carta muerta, espera 5s y reencola con `canal.nack(mensaje, false, true)` (el único `requeue: true` del worker, porque una DLQ no tiene otra DLQ detrás).
+29. **Persistencia Relacional y Dos Dueños (`EP2-Caso-VidalStore.pdf` §4.4 y L7 Tramos 4 y 5)**:
+    - **Worker (`vidalstore-eventos`) · Dueño de 3 tablas con TypeORM y `pg`**:
+      - `eventos_auditoria`: `id uuid PK`, `routing_key text`, `evento_id uuid UNIQUE` (`uq_eventos_auditoria_evento_id`, garantiza idempotencia), `usuario_sub text nullable` (para `juego.publicado`), `payload jsonb`, `emitido_en timestamptz`, `recibido_en timestamptz`. Índice compuesto `ix_eventos_auditoria_routing_recibido` en `(routing_key, recibido_en)`.
+      - `notificaciones`: `id uuid PK`, `para text`, `asunto text`, `estado text CHECK (estado IN ('enviada', 'fallida'))`, `evento_id uuid` (indexado con `ix_notificaciones_evento_id`, NO único), `creada_en`/`enviada_en timestamptz`.
       - `mensajes_muertos`: `id uuid PK`, `cola_origen text`, `routing_key text`, `motivo text`, `intentos int CHECK (intentos >= 1)`, `payload text`, `reprocesada boolean DEFAULT false`, `recibido_en timestamptz`.
-    - **Productor de Licencias (`vidalstore-backend` en esquema `licencias`) · NO usa ORM (Conexión Directa `pg.Pool`)**:
-      - Conexión directa nativa con `pg` (`node-postgres`) y `LicenciasDbService`.
-      - Tabla `licencias`: `id uuid PK`, `juego_id text`, `usuario_sub text`, `estado text CHECK (estado IN ('activa', 'revocada'))`, `precio_pagado numeric(10, 2)`, `creado_en timestamptz`.
-      - **Índice parcial obligatorio**: `UNIQUE (usuario_sub, juego_id) WHERE estado = 'activa'` (permite volver a comprar si fue revocada; regla de Arturo en base de datos).
-    - **Microservicio Administrador (`vidalstore-admin`) · NO usa ORM (Conexión Directa `pg.Pool`)**:
-      - Conexión nativa con `pg.Pool` en `RabbitAdminService` para auditar, borrar (`DELETE`) y marcar reproceso (`UPDATE mensajes_muertos SET reprocesada = true WHERE id = $1`) sin sobrecarga de ORM.
-    - Cero Foreign Keys entre servicios. Manejo de conexión con `pool.on('error', ...)` para evitar que reinicios de Postgres boten el proceso de Node.
+    - **Productor de Licencias (`vidalstore-backend`) · Dueño de la tabla `licencias` (`LicenciasDbService` con `pg.Pool`)**:
+      - Tabla `licencias`: `id uuid PK`, `juego_id text` (**sin FK**, porque el catálogo vive en otro servicio), `usuario_sub text` (extraído del token), `estado text CHECK (estado IN ('activa', 'revocada'))`, `adquirida_en`/`creado_en timestamptz`, `revocada_en timestamptz nullable`, `revocada_por text nullable`.
+      - **Índice único parcial obligatorio**: `CREATE UNIQUE INDEX uq_licencias_usuario_juego_activa ON licencias (usuario_sub, juego_id) WHERE estado = 'activa'` (impide comprar dos veces el mismo juego activo, pero permite recomprarlo si fue revocado).
+      - Al revocar (`DELETE /v1/licencias/:id`), `revocadaPor` sale del `sub` del token del administrador, y el `usuarioSub` del evento `licencia.revocada` sale de la fila de `licencias` revocada.
+    - **Frontera estricta**: Cero Foreign Keys y cero `JOIN` entre `licencias` y `eventos_auditoria`. Manejo de conexiones ociosas con `pool.on('error', ...)`.
 30. **Metodología Obligatoria: Plan de Implementación y Walkthrough Técnico (Skill Viva)**:
-    - **Antes de codear**: Toda feature o rama de trabajo debe contar obligatoriamente con un **Plan de Implementación Formal** presentado como artefacto interactivo (`RequestFeedback: true`). Debe declarar: contexto de rúbrica (indicadores y %), diagrama Mermaid, fases atómicas paso a paso, contratos e interfaces TypeScript, política estricta de resiliencia y códigos HTTP (400, 404, 503, nunca 500 ciego), estrategia de pruebas en Vitest y propuesta de commits atómicos.
+    - **Antes de codear**: Toda feature o rama de trabajo debe contar obligatoriamente con un **Plan de Implementación Formal** presentado como artefacto interactivo (`RequestFeedback: true`).
     - **Durante el trabajo**: Ejecución estrictamente atómica, validando tests en cada etapa y respetando la prohibición de tocar Git sin autorización explícita previa.
-    - **Al terminar (Sincronización de Skill Viva)**: Generación obligatoria de un **Walkthrough de Cierre** e **incorporación inmediata de sus preguntas técnicas y decisiones de arquitectura dentro de la skill** ([references/preguntas_defensa.md](./references/preguntas_defensa.md)). De esta forma, la skill evoluciona incrementalmente con cada commit y el estudiante dispone de un banco de estudio unificado y vivo para su defensa individual de 15 minutos.
+    - **Al terminar (Sincronización de Skill Viva)**: Generación obligatoria de un **Walkthrough de Cierre** e incorporación inmediata de sus preguntas técnicas y decisiones de arquitectura en [references/preguntas_defensa.md](./references/preguntas_defensa.md).
     - Plantillas y especificación completa en [references/metodologia_plan_y_walkthrough.md](./references/metodologia_plan_y_walkthrough.md).
 31. **Método de Diagnóstico en 4 Pasos y Lectura de Traza (D9 Slides 5–7)**:
     - 1. **Síntoma**: Con sus palabras exactas (`connect ECONNREFUSED 172.25.0.2:5432`), nunca «no funciona».
@@ -188,65 +195,53 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - 1. **Éxito**: `canal.ack(mensaje)` tras persistir con éxito en PostgreSQL.
     - 2. **Duplicado (SQLSTATE `23505`)**: `canal.ack(mensaje)` + log `WARN`. El evento ya fue guardado en una entrega previa; NO va a la DLQ.
     - 3. **Error permanente / veneno** (JSON roto, falta `usuarioSub`, error de datos SQL `22...`/`23...`): `canal.nack(mensaje, false, false)` directo a la DLQ. No se reintenta.
-    - 4. **Error transitorio** (Postgres caído, timeout): `conReintentos` con backoff exponencial y jitter (límite fijo de 3); si se agotan, `canal.nack(mensaje, false, false)` a la DLQ.
-    - **Prohibido republicar al exchange**: En `vidalstore.eventos` la auditoría está atada con `#`; republicar generaría duplicaciones en cascada.
+    - 4. **Error transitorio** (Postgres caído, timeout): `conReintentos` (límite fijo de 3, espera 2s y 4s); si se agotan, `canal.nack(mensaje, false, false)` a la DLQ.
 33. **Idempotencia en Persistencia vs Carrera TOCTOU (LA9 Ejercicios 1 y 2)**:
     - «Reviso y luego inserto» (`SELECT` y luego `INSERT`) falla ante dos llamadas concurrentes (dos réplicas o prefetch > 1) por la ventana de tiempo entre consulta y escritura (vulnerabilidad TOCTOU).
-    - Solo la restricción **`UNIQUE (evento_id)`** en PostgreSQL garantiza atomicidad e idempotencia en un solo paso dentro del motor de base de datos.
-    - El `ack` va siempre después del trabajo: `noAck: false` otorga entrega *at least once*. El costo es posible duplicación, absorbida limpiamente por el índice único.
-34. **Clúster RabbitMQ, Quorum Queues y Quórum Raft (D9 Slides 20–25, IE9, IE10)**:
-    - Clúster de 2 nodos (`rabbit1` en 5672/15672 y `rabbit2` en 5673/15673) compartiendo `RABBITMQ_ERLANG_COOKIE`.
-    - **Las colas clásicas NO se replican**: viven en un solo nodo; los demás solo redirigen.
-    - **Quorum Queues (`x-queue-type: quorum`)**: Colas replicadas basadas en el algoritmo Raft. (`mirrored queues` / `ha-mode` fueron eliminadas en RabbitMQ 4).
-    - **Regla de la mayoría ($\lfloor N/2 \rfloor + 1$)**: Con 2 nodos, la mayoría son 2. **2 nodos soportan 0 caídas**. Si `rabbit2` cae, el clúster entra en estado `minority` y suspende las confirmaciones de escritura. (Para tolerar 1 caída se requieren 3 nodos).
-35. **Políticas de Retención, Limpieza y Estrategias de Desborde (D9 Slides 30–33, IE19)**:
-    - Una cola sin límites satura la RAM del nodo, activando la alarma de memoria de RabbitMQ y bloqueando todas las publicaciones del broker.
-    - Políticas aplicadas con `rabbitmqctl set_policy` sin tocar código ni reiniciar contenedores.
-    - **`drop-head`**: Descarta lo más antiguo en silencio; ideal para la cola de **Avisos** (notificaciones efímeras).
-    - **`reject-publish`**: Rechaza al productor con nack; obligatorio para la cola de **Auditoría** (prueba legal del sistema).
-    - **Trampa en DLQ**: Jamás aplicar `drop-head` o TTL agresivo en DLQ, ya que borraría la evidencia forense de los errores.
-36. **Validación de Sintaxis YAML y Docker Compose en Tres Capas (LA9 Ejercicio 3, IE11)**:
-    - `docker compose config` valida el archivo sin instanciar contenedores ni redes.
-    - 1. *Parser léxico YAML*: Indentación dispar (ojo: conteo base 0 en mensajes `while parsing`).
-    - 2. *Constructor semántico YAML*: Claves hermanas anidadas por exceso de espacios (ej. `rabbit1:` con 4 espacios dentro de `postgres:`).
-    - 3. *Validador de Compose*: Estructura YAML válida que viola el esquema de Compose (ej. `name:` interpretado como un nuevo volumen en vez de atributo).
-37. **Clúster de Dos Nodos y Autodescubrimiento con `cluster.conf` (L8 Tramo 1, IE9, IE10, IE11)**:
-    - Dos nodos `rabbit1` y `rabbit2` compartiendo `RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_COOKIE}`.
-    - Descubrimiento automático con `cluster.conf` montado en `/etc/rabbitmq/conf.d/20-cluster.conf:ro`.
-    - **Prohibido `depends_on: { rabbit1: { condition: service_healthy } }` en `rabbit2`**: evita *deadlocks* en reinicios y fallas por recreación (`container rabbit1 is unhealthy`). Ambos arrancan en paralelo.
-    - Procedimiento de rescate a mano con los 4 comandos estrictamente en `rabbit2` (`stop_app` -> `reset` -> `join_cluster rabbit@rabbit1` -> `start_app`). **Prohibido `reset` en `rabbit1`** (borra la base Mnesia y todas las colas de L7).
-    - `cluster_status`: al apagar `rabbit2`, ambos permanecen en `Disk Nodes` y solo `rabbit1` en `Running Nodes`. Al reencenderlo vuelve solo sin repetir ningún `join_cluster`.
-38. **Quorum Queues, Consenso Raft y la Cuenta de la Mayoría (L8 Tramo 2, IE10, IE12, IE13)**:
-    - Argumento `'x-queue-type': 'quorum'` obligatorio en todas las colas de trabajo y las 3 DLQ. Las colas espejo (`ha-mode: all`) fueron **eliminadas en RabbitMQ 4.0**.
-    - Mayoría Raft estricta $\lfloor N/2 \rfloor + 1$. Con 2 nodos la mayoría es 2; **2 nodos toleran 0 caídas**.
-    - Al apagar `rabbit2`, `/api/queues` muestra `state: minority`. `rabbitmqctl list_queues state` sigue diciendo `running` porque mide el proceso local de Erlang en `rabbit1`, no la mayoría Raft.
-    - `sendToQueue` a secas engaña con `true` (solo buffer del socket TCP local). Se exigen canales confirmados (`publisher-confirms`) que lanzan `confirm_timeout`.
-    - **Argumento de defensa**: 2 nodos dan durabilidad física en 2 volúmenes y recuperación automática sin intervención, no alta disponibilidad (la alta disponibilidad requiere mínimo 3 nodos impares).
-    - Diagnóstico preventivo con `rabbitmq-diagnostics check_if_node_is_quorum_critical` (código de salida 69 intencional). `rabbitmq_metadata` también es Raft y bloquea la creación de colas ante pérdida de mayoría.
-39. **Microservicio Administrador y Arquitectura de 2 Protocolos (L8 Tramo 3, IE6, IE7, IE8, IE17)**:
-    - Puerto `3020` (`vidalstore-admin`).
-    - 2 protocolos: AMQP (:5672) para mutaciones (`assertQueue`, `deleteQueue`, `assertExchange`, etc.), HTTP Management API (:15672) para lecturas (listar colas, métricas).
-    - Conexión TCP persistente única; canal AMQP efímero por operación con `canal.on('error', () => undefined)` para que un rechazo de canal no bote el proceso de Node.js ni afecte a otros clientes concurrentes.
-    - DTOs con `class-validator` y regex de nombres `NOMBRE_VALIDO = /^[a-zA-Z0-9._-]+$/`, routing key con `#` y `*`.
-    - `ValidationPipe` global con `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`.
-    - Encapsulación en `RabbitAdminService`: el controlador no habla con `amqplib` (cero llamadas directas).
-    - Método `traducir()`: `NOT_FOUND` $\rightarrow$ 404, `PRECONDITION_FAILED` $\rightarrow$ 409 Conflict, caída/quórum $\rightarrow$ 503 Service Unavailable (¡nunca 500 ciego!).
-    - Borrado idempotente: si el recurso no existe, retornar `200 OK`.
-40. **Observabilidad, Métricas del Clúster y Alarmas (L8 Tramo 4, IE18)**:
-    - 6 métricas clave: `messages_ready`, `messages_unacknowledged`, `disk_free` / `disk_alarm`, `mem_used` / `mem_alarm`, `running_nodes` / `partitions`, `object_totals.queues`.
-    - Consultas HTTP a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (escape obligatorio `%2F` del vhost `/`).
-    - Alerta crítica: `messages_ready` subiendo con 0 consumidores $\rightarrow$ worker caído (revisar logs, jamás reiniciar RabbitMQ ni purgar la cola).
-    - `messages_unacknowledged` congelado en el prefetch $\rightarrow$ consumidor bloqueado o sin `ack`.
-41. **Políticas de Retención, Límites y Estrategias de Desborde (L8 Tramo 5, IE19)**:
-    - Previene saturación de disco/memoria que bloquearía todo el broker con alarmas.
-    - `max-length`, `message-ttl` (se asigna al ENTRAR a la cola, no es retroactivo) y `overflow`.
-    - `drop-head` (descarta lo más viejo, ack al productor) para colas de avisos/efímeras.
-    - `reject-publish` (rechaza con nack al productor) para auditoría y colas de trabajo. Quorum queue admite 1 sobre el límite antes de rechazar.
-    - Políticas versionadas en `rabbitmq/politicas.json` y cargadas en Compose con `import_definitions`.
-    - Debate de retención en DLQ: `reject-publish` (Fail-Fast, no esconder errores) vs `drop-head` (conservar lo más reciente para análisis forense).
-42. **Prueba en Limpio del 17% (Evaluación Formativa 2, IE11)**:
-    - Demostración de clon limpio: `.env` desde `.env.example`, `docker compose down -v` y `docker compose up -d --wait`.
-    - Verificación con `cluster_status` con ambos nodos en `Running Nodes`.
+    - Solo la restricción **`UNIQUE (evento_id)`** en PostgreSQL con una única operación `insert` (no `save`) garantiza atomicidad e idempotencia dentro del motor de base de datos.
+34. **Clúster RabbitMQ 4.3, Khepri (Raft), Quorum Queues y Cuenta de la Mayoría (D9, L8 Tramos 1 y 2, IE9, IE10, IE11)**:
+    - Clúster de 2 nodos (`rabbit1`/`rabbitmq1` en 5672/15672 y `rabbit2`/`rabbitmq2` en 5673/15673) compartiendo `RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_COOKIE}` y montando `rabbitmq/cluster.conf` en `/etc/rabbitmq/conf.d/20-cluster.conf:ro`.
+    - **Prohibido `depends_on` entre `rabbit1` y `rabbit2`**: Un nodo de un clúster ya formado no enciende su broker hasta ver a su compañero porque el almacén de metadatos exige mayoría; con `depends_on` se bloquean mutuamente para siempre (*deadlock*).
+    - **Khepri (Raft) reemplaza a Mnesia en RabbitMQ 4.3**:
+      - En RabbitMQ 4.3 el almacén de metadatos (`rabbitmq_metadata`) es un grupo Raft administrado por **Khepri** (por eso `cluster_partition_handling = autoheal` ya no tiene efecto en 4.3 y no se incluye en `cluster.conf`).
+      - Comando de diagnóstico de metadatos en 4.3: `rabbitmq-diagnostics metadata_store_status` (muestra el nodo `Leader` y los `Voter` de Khepri).
+      - Si cae 1 de los 2 nodos, Khepri queda en minoría (1/2) y cualquier operación de topología (`assertQueue`, `bindQueue`) falla tras ~30s con código `75` (`TEMPFAIL`: *"Khepri cluster could be in minority"*).
+    - **Quorum Queues (`x-queue-type: quorum`)**: Replicadas por Raft. Las colas espejo (`ha-mode: all`) fueron **eliminadas en RabbitMQ 4.0**.
+    - **Regla de la mayoría ($\lfloor N/2 \rfloor + 1$)**: Con 2 nodos la mayoría es 2 $\rightarrow$ **2 nodos toleran 0 caídas**. Al apagar `rabbit2`, `/api/queues` reporta `state: minority`, mientras `rabbitmqctl list_queues state` sigue diciendo `running` (porque mide el proceso Erlang local en `rabbit1`, no la mayoría Raft).
+    - **Respuesta oficial de defensa (L8 §2.7)**: *"Dos nodos me dan durabilidad y recuperación automática, no alta disponibilidad. La alta disponibilidad empieza en tres, porque Raft necesita mayoría y la mayoría de dos es dos."*
+    - **Diagnóstico preventivo y scripts de prueba**: `rabbitmq-diagnostics check_if_node_is_quorum_critical` (sale con código 69 a propósito listando las 6 colas y `rabbitmq_metadata`). En `vidalstore-plataforma/scripts/` se incluyen `rabbitmq-cluster-test.sh` (guion interactivo de 8 pasos que soporta `--cae rabbitmq2`) y `sonda-cluster.ts`.
+35. **Microservicio Administrador (`vidalstore-admin` :3020) (`EP2-Caso-VidalStore.pdf` §3.6 y §4.5, L8 Tramo 3, IE6, IE7, IE8, IE17)**:
+    - **Las 8 rutas obligatorias (§4.5)**: `GET /v1/admin/colas`, `POST /v1/admin/colas`, `DELETE /v1/admin/colas/:nombre`, `GET /v1/admin/exchanges`, `POST /v1/admin/exchanges`, `DELETE /v1/admin/exchanges/:nombre`, `POST /v1/admin/bindings`, `DELETE /v1/admin/bindings` (con cuerpo). Todas protegidas por `JwtGuard`/`AuthGuard` y `RolGuard`/`RolesGuard` para el grupo `administradores` (leyendo `ctx.getHandler() ?? ctx.getClass() ?? []`).
+    - **Protocolos de escritura y lectura (`EP2-Caso-VidalStore.pdf` pág. 12 y 21)**:
+      - El enunciado oficial autoriza explícitamente elegir entre el **canal AMQP (`:5672`)** o la **API HTTP de Management (`:15672`)** para las escrituras, mientras que los listados (`GET`) van siempre por la API HTTP (`:15672`) porque AMQP no tiene operación para listar colas.
+      - En `vidalstore-admin`, `RabbitAdminService` implementa ambos: los métodos de los endpoints REST (`crearCola`, `eliminarCola`, `crearExchange`, `eliminarExchange`, `crearBinding`, `eliminarBinding`) operan contra la API HTTP (`:15672/api/...` manejando `204 No Content`), y además provee `conCanalEfimero()`, `declararColaAmqp()`, `eliminarColaAmqp()` y `traducir()` sobre canales AMQP efímeros con `canal.on('error', ...)` para aislar rechazos de protocolo.
+    - **Validación de entrada (IE8)**: DTOs con `class-validator` (`NOMBRE_VALIDO = /^[a-zA-Z0-9._-]+$/` con `message` descriptivo en español) y `ValidationPipe` global con `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`. (Nota: verificar que el DTO de bindings acepte `{ exchange, cola, routingKey }` como pide `EP2-Caso-VidalStore.pdf` pág. 20 y `L8.pdf` pág. 25, además o en lugar de `{ origen, destino, routingKey }`).
+    - **Traducción semántica de errores (`traducir()`)**: `NOT_FOUND` $\rightarrow$ `404 NotFoundException`, `PRECONDITION_FAILED` / `inequivalent arg` $\rightarrow$ `409 ConflictException`, broker caído o sin mayoría $\rightarrow$ `503 ServiceUnavailableException`. Borrado idempotente responde `200 OK`.
+36. **Observabilidad, Métricas del Clúster y Alarmas (`EP2-Caso-VidalStore.pdf` §5.1 pto 10 y L8 Tramo 4, IE18)**:
+    - Las 6 métricas que pide la EP2 (L8 §4.1):
+      1. **Colas activas (`object_totals.queues`)**: Si sobran, alguien creó colas de prueba y no las borró; si faltan, un consumidor no arrancó.
+      2. **Mensajes pendientes (`messages_ready`)**: La más importante; si sube sin parar, los consumidores están caídos o lentos.
+      3. **Mensajes sin confirmar (`messages_unacknowledged`)**: Si queda pegado en el valor del `prefetch` y no baja, el consumidor recibió pero no hace `ack` (bug de código o proceso colgado).
+      4. **Tasas de publicación y entrega (`incoming` vs `deliver / get`)**: Si entran más de los que salen, la cola crece; si `deliver` es 0 con consumidores conectados, están trabados.
+      5. **Consumidores (`consumers`)**: `0` en una cola de trabajo es una falla silenciosa grave. **Métrica #1 para una alerta automática**: `messages_ready` creciendo con `consumers == 0`.
+      6. **Mensajes en la DLQ (`messages_ready` en `dlq.*` y filas en `mensajes_muertos`)**: Filas nuevas en `mensajes_muertos` exigen revisar el `motivo`; `messages_ready > 0` en una `dlq.*` significa que `CartasMuertasConsumidor` o Postgres están caídos.
+    - Consultas HTTP a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (escape obligatorio `%2F` del vhost `/`) y `/api/health/checks/alarms`.
+37. **Políticas de Retención y Limpieza (`EP2-Caso-VidalStore.pdf` §3.6 y §4.7, D9, L8 Tramo 5, IE19)**:
+    - Evitan que una cola desatendida llene el disco/RAM y dispare la alarma que bloquea las publicaciones en **todo** el broker.
+    - **Criterio conceptual de cátedra (`D9` y `L8.pdf` §5.1 / §5.5)**:
+      - `retencion-avisos` (`notificaciones` / `q.avisos`): `max-length: 10000`, `message-ttl: 259200000` (3 días) o `3600000` (1 h), `overflow: "drop-head"` (descarta lo más viejo porque un aviso viejo ya no sirve; al tener DLX cae con motivo `maxlen` o `expired`).
+      - `retencion-trabajo` (`auditoria|correos`): `max-length: 10000` (o `50000`), **sin `message-ttl`** (la auditoría es prueba legal y no vence), y en cátedra `overflow: "reject-publish"` (rechaza al productor con `nack` para no perder nada en silencio; requiere que el productor escuche con `ConfirmChannel`).
+      - `retencion-dlq` (`dlq.*`): `max-length` alto y `message-ttl` largo (7 o 14 días), con `overflow: "reject-publish"` (o `drop-head` justificando conservar los más recientes).
+    - **Configuración real en `vidalstore-plataforma/rabbitmq/politicas.json` y su defensa técnica**:
+      - Usa 3 políticas con `apply-to: "queues"` y `priority: 10` (para que políticas de prueba con prioridad 0 o 1 no las pisen), con patrones regex **anclados con `^` y `$`** (`^q\.avisos$`, `^q\.(auditoria|correos)$`, `^dlq\.(avisos|auditoria|correos)$` — sin `^`, `q\.avisos` calzaría dentro de `dlq.avisos` pisando la política de la DLQ):
+        1. `retencion-avisos`: `max-length: 10000`, `max-length-bytes: 20971520` (20 MiB), `overflow: "drop-head"`, `message-ttl: 3600000` (1 h).
+        2. `retencion-trabajo`: `max-length: 50000`, `max-length-bytes: 104857600` (100 MiB), `overflow: "drop-head"`, sin `message-ttl`. (Justificación en `docs/politicas-retencion.md`: dado que los productores publican sin `ConfirmChannel`, `reject-publish` descartaría el evento nuevo sin que el productor se entere; con `drop-head` + DLX, el mensaje más antiguo pasa a `dlq.auditoria`/`dlq.correos` con `reason = maxlen` y queda resguardado en `mensajes_muertos`).
+        3. `retencion-dlq`: `max-length: 250000`, `max-length-bytes: 524288000` (500 MiB), `overflow: "reject-publish"`, `message-ttl: 1209600000` (14 días).
+      - **Por qué no se carga con `load_definitions` en `cluster.conf` al iniciar en blanco**: En RabbitMQ 4.3, importar un archivo de definiciones en un nodo recién nacido omite la creación del vhost `/` y del usuario por defecto; por eso se aplica post-arranque con `rabbitmqctl import_definitions /etc/rabbitmq/politicas.json` o `scripts/rabbitmq-policies.sh`.
+      - **Nombre del archivo entregable**: `EP2-Caso-VidalStore.pdf` pág. 23 y 24 y `L8.pdf` pág. 52 piden el archivo `docs/politicas.md` (en `vidalstore-plataforma/docs/` existe como `docs/politicas-retencion.md`, por lo que conviene mantener ambos o asegurar `docs/politicas.md`).
+    - **Matices de RabbitMQ 4**: (1) En Quorum Queues, `reject-publish` admite **+1 mensaje** sobre `max-length` antes de rechazar (con `max-length: 3` entran 4 y el 5° se rechaza); (2) `reject-publish-dlx` **no funciona en colas quorum** (se comporta como `drop-head` sin avisar); (3) `message-ttl` se asigna al **entrar** a la cola y **no borra mensajes viejos** que ya estaban antes de aplicar la política.
+38. **Prueba en Limpio del 17% (Evaluación Formativa 2, IE11)**:
+    - Demostración desde un clon limpio: crear `.env` desde `.env.example`, `docker compose down -v`, `docker compose up -d --wait`, `cluster_status` con ambos nodos en `Running Nodes`, `import_definitions` de las políticas y verificación de `data/catalogo.json` con su `seed.ts`.
 
 ---
 

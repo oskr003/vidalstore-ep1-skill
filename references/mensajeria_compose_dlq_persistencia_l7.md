@@ -192,54 +192,37 @@ Un mensaje roto (ej. JSON mal formado, campos requeridos faltantes) fallará hoy
 ```
 
 ### 5.2 Declaración en `topologia.ts`: Argumentos de Cola
-Cada cola de trabajo se declara vinculada al exchange de cartas muertas:
+Cada cola de trabajo se declara vinculada al exchange de cartas muertas (`shared/topologia.ts`):
 ```typescript
 export const EXCHANGES = {
-  eventos: 'vidalstore.eventos',
-  comandos: 'vidalstore.comandos',
-  dlx: 'vidalstore.dlx',
+  EVENTOS: { nombre: 'vidalstore.eventos', tipo: 'topic' },
+  COMANDOS: { nombre: 'vidalstore.comandos', tipo: 'direct' },
+  DLX: { nombre: 'vidalstore.dlx', tipo: 'direct' },
 } as const;
 
 export const COLAS = {
-  avisos: 'cola-avisos',
-  auditoria: 'cola-auditoria',
-  correos: 'cola-correos',
+  avisos: 'q.avisos',
+  auditoria: 'q.auditoria',
+  correos: 'q.correos',
 } as const;
 
-export const DLQ = {
-  avisos: 'cola-avisos.dlq',
-  auditoria: 'cola-auditoria.dlq',
-  correos: 'cola-correos.dlq',
+export const DLQS = {
+  avisos: 'dlq.avisos',
+  auditoria: 'dlq.auditoria',
+  correos: 'dlq.correos',
 } as const;
 ```
 
-En la función `declararTopologia(canal)`:
-```typescript
-// 1. Declarar Exchanges (eventos topic, comandos direct, dlx direct)
-await canal.assertExchange(EXCHANGES.eventos, 'topic', { durable: true });
-await canal.assertExchange(EXCHANGES.comandos, 'direct', { durable: true });
-await canal.assertExchange(EXCHANGES.dlx, 'direct', { durable: true });
-
-// 2. Declarar las tres DLQ y enlazarlas al DLX usando el nombre de su cola como routing key
-for (const [clave, nombreDlq] of Object.entries(DLQ)) {
-  await canal.assertQueue(nombreDlq, { durable: true });
-  await canal.bindQueue(nombreDlq, EXCHANGES.dlx, COLAS[clave as keyof typeof COLAS]);
-}
-
-// 3. Declarar las colas de trabajo con sus argumentos de Dead Lettering
-for (const [clave, nombreCola] of Object.entries(COLAS)) {
-  await canal.assertQueue(nombreCola, {
-    durable: true,
-    deadLetterExchange: EXCHANGES.dlx,
-    deadLetterRoutingKey: nombreCola, // enruta a su DLQ correspondiente
-  });
-}
-
-// 4. Enlazar colas de trabajo a los exchanges principales
-await canal.bindQueue(COLAS.avisos, EXCHANGES.eventos, 'compra.*');
-await canal.bindQueue(COLAS.auditoria, EXCHANGES.eventos, '#');
-await canal.bindQueue(COLAS.correos, EXCHANGES.comandos, 'correo.enviar');
-```
+En la función `declararTopologia(canal)` (**Reglas Oficiales de `EP2-Caso-VidalStore.pdf` pág. 12 y 14 vs Código Actual**):
+- **Orden estricto (No se negocia)**:
+  1. Declarar los 3 Exchanges (`durable: true`).
+  2. Declarar primero las 3 DLQs (`durable: true`, `'x-queue-type': 'quorum'`) y enlazarlas a `vidalstore.dlx`.
+  3. Declarar las 3 colas de trabajo (`durable: true`, `'x-queue-type': 'quorum'`, `'x-dead-letter-exchange': 'vidalstore.dlx'`, `'x-dead-letter-routing-key'`).
+  4. Declarar los bindings de negocio.
+- **Reglas "No se negocia" de `EP2-Caso-VidalStore.pdf` pág. 12 y 14**:
+  1. **Binding de Auditoría (`q.auditoria`)**: Debe enlazarse a `vidalstore.eventos` con **`#`** (*"Guarda cada evento en `eventos_auditoria`. Escucha todo, incluido lo que se agregue después"*). *(Ojo: en `shared/topologia.ts` actual se enlazó con `PATRONES_EVENTOS = ['#.realizada', '#.revocada', '#.publicado']` siguiendo el plan preliminar `ep2-plan-v2.pdf`, pero el enunciado oficial exige `#` como no negociable).*
+  2. **Binding de Avisos (`q.avisos`)**: Lo define el grupo y **tiene que capturar como mínimo `licencia.revocada`**, que es el evento de la demostración. **Trampa documentada en `L7.pdf` pág. 80**: Traducir `prestamo.*` a `compra.*` es un error porque deja fuera `licencia.revocada`. Usar `['#.realizada', '#.revocada', '#.publicado']` o `['compra.realizada', 'licencia.revocada']` es válido.
+  3. **`x-dead-letter-routing-key` y Binding en `vidalstore.dlx`**: `EP2-Caso-VidalStore.pdf` pág. 12 y 14 pide que cada DLQ esté atada a `vidalstore.dlx` con `<el nombre de la propia cola de trabajo>` (`q.avisos`, `q.auditoria`, `q.correos`) y que la cola de trabajo declare ese mismo nombre en `x-dead-letter-routing-key`. *(En `shared/topologia.ts` actual ambas partes usan el nombre de la DLQ `dlq.avisos`, `dlq.auditoria`, `dlq.correos`).*
 
 > [!IMPORTANT]
 > **Orden Estricto de Declaración:**

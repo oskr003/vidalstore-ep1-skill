@@ -115,22 +115,38 @@ def audit_cluster_config():
             check_warn("cluster.conf no parece estar montado en el bloque volumes de los nodos")
 
 def audit_quorum_queues():
-    print_header("2. QUORUM QUEUES Y MIGRACIÓN RAFT (IE10, IE12, IE13)")
-    topologia_ts = find_file("topologia.ts") or find_file("topologia.mjs")
-    
-    if topologia_ts:
-        content = read_content(topologia_ts)
-        quorum_count = content.count("'x-queue-type': 'quorum'") + content.count('"x-queue-type": "quorum"') + content.count("x-queue-type: 'quorum'")
-        
-        if quorum_count >= 2 or "quorum" in content:
-            check_pass(f"Topología declara colas Quorum con 'x-queue-type': 'quorum' ({os.path.relpath(topologia_ts, BASE_DIR)})")
+    print_header("2. QUORUM QUEUES, MIGRACIÓN RAFT Y SINCRONIZACIÓN DE TOPOLOGÍA (IE1, IE10, IE12, IE13)")
+    topo_paths = [
+        os.path.join(BASE_DIR, "vidalstore-plataforma", "shared", "topologia.ts"),
+        os.path.join(BASE_DIR, "vidalstore-eventos", "src", "mensajeria", "topologia.ts"),
+        os.path.join(BASE_DIR, "vidalstore-admin", "src", "mensajeria", "topologia.ts"),
+        os.path.join(BASE_DIR, "vidalstore-backend", "src", "mensajeria", "topologia.ts"),
+    ]
+    existing_topos = [p for p in topo_paths if os.path.exists(p)]
+
+    if existing_topos:
+        for tpath in existing_topos:
+            content = read_content(tpath)
+            rel = os.path.relpath(tpath, BASE_DIR)
+            quorum_count = content.count("'x-queue-type': 'quorum'") + content.count('"x-queue-type": "quorum"') + content.count("x-queue-type: 'quorum'")
+            if quorum_count >= 2:
+                check_pass(f"{rel} declara colas Quorum con 'x-queue-type': 'quorum' ({quorum_count} bloques)")
+            else:
+                check_fail(f"{rel} no contiene 'x-queue-type': 'quorum' en las colas",
+                           "Agregar 'x-queue-type': 'quorum' a las colas de trabajo y las 3 DLQ.")
+            if "COLA_REPROCESO" in content and quorum_count < 3:
+                check_warn(f"{rel} declara COLA_REPROCESO ('q.reprocesar') sin 'x-queue-type': 'quorum'.")
+            if "ha-mode" in content:
+                check_fail(f"Se detectó 'ha-mode' en {rel}. Las colas espejo fueron eliminadas en RabbitMQ 4.0")
+
+        # Verificar consistencia entre archivos topologia.ts (IE1)
+        has_reproceso_cola = [os.path.relpath(p, BASE_DIR) for p in existing_topos if "COLA_REPROCESO" in read_content(p)]
+        missing_reproceso_cola = [os.path.relpath(p, BASE_DIR) for p in existing_topos if "COLA_REPROCESO" not in read_content(p)]
+        if has_reproceso_cola and missing_reproceso_cola:
+            check_warn(f"Desincronización en topologia.ts (IE1): {has_reproceso_cola} define COLA_REPROCESO pero {missing_reproceso_cola} no la incluye.",
+                       "Propagar la misma definición de topologia.ts a los 4 repositorios (EP2-Caso-VidalStore.pdf §4.1 pág. 15).")
         else:
-            check_fail("topologia.ts no contiene 'x-queue-type': 'quorum'",
-                       "Agregar 'x-queue-type': 'quorum' a los argumentos de las colas de trabajo y las 3 DLQ.")
-        
-        if "ha-mode" in content:
-            check_fail("Se detectó 'ha-mode' en topología. Las colas espejo fueron eliminadas en RabbitMQ 4.0",
-                       "Reemplazar colas espejo por Quorum Queues.")
+            check_pass("Los archivos topologia.ts están sincronizados entre los repositorios.")
     else:
         check_warn("No se encontró archivo topologia.ts para auditar Quorum Queues")
 
@@ -160,7 +176,7 @@ def audit_admin_microservice():
         has_amqp = "assertQueue" in content or "deleteQueue" in content
         has_http = "fetch" in content or "axios" in content or "http" in content or "/api/queues" in content
         if has_amqp and has_http:
-            check_pass("RabbitAdminService implementa arquitectura de 2 protocolos (AMQP para mutaciones y HTTP para lecturas)")
+            check_pass("RabbitAdminService implementa arquitectura de 2 protocolos (AMQP y HTTP Management API)")
         elif has_amqp:
             check_warn("RabbitAdminService implementa AMQP pero no parece consultar la HTTP Management API para listar colas")
     else:
@@ -181,6 +197,13 @@ def audit_admin_microservice():
     else:
         check_warn("No se encontró archivo DTO explícito de colas en el administrador")
 
+    binding_dto = find_file("crear-binding.dto.ts") or find_file("binding.dto.ts")
+    if binding_dto:
+        b_content = read_content(binding_dto)
+        if "origen" in b_content and "exchange" not in b_content.split("class")[1]:
+            check_warn("CrearBindingDto usa 'origen' y 'destino', pero EP2-Caso-VidalStore.pdf (pág. 20) y L8.pdf (pág. 25) especifican '{ exchange, cola, routingKey }'.",
+                       "Con forbidNonWhitelisted: true, un curl del docente enviando '{ exchange, cola, routingKey }' recibirá 400 Bad Request si no se admiten ambos nombres.")
+
     # 3.3 ValidationPipe global
     admin_main = find_file("main.ts", search_dirs=[os.path.join(BASE_DIR, "vidalstore-admin")])
             
@@ -200,7 +223,7 @@ def audit_admin_microservice():
         check_warn("No se encontró main.ts en vidalstore-admin")
 
 def audit_policies():
-    print_header("4. POLÍTICAS DE RETENCIÓN VERSIONADAS (IE19)")
+    print_header("4. POLÍTICAS DE RETENCIÓN VERSIONADAS Y DOCUMENTACIÓN (IE19 & EP2 §4.8)")
     politicas_json = find_file("politicas.json")
     
     if politicas_json:
@@ -218,7 +241,7 @@ def audit_policies():
             check_fail("Falta directiva 'max-length' en politicas.json")
 
         if has_drop_head and has_reject_pub:
-            check_pass("Políticas implementan ambas estrategias de overflow: drop-head (avisos) y reject-publish (auditoría/DLQ)")
+            check_pass("Políticas implementan ambas estrategias de overflow: drop-head y reject-publish")
         elif has_drop_head or has_reject_pub:
             check_warn("Se encontró solo una de las estrategias de overflow (drop-head o reject-publish)")
             
@@ -229,6 +252,27 @@ def audit_policies():
     else:
         check_fail("No se encontró rabbitmq/politicas.json",
                    "Crear rabbitmq/politicas.json y montarlo en rabbit1 para cargar con import_definitions.")
+
+    docs_dir = os.path.join(BASE_DIR, "vidalstore-plataforma", "docs")
+    if os.path.exists(docs_dir):
+        pol_md = os.path.join(docs_dir, "politicas.md")
+        pol_ret_md = os.path.join(docs_dir, "politicas-retencion.md")
+        if os.path.exists(pol_md):
+            check_pass("Archivo entregable docs/politicas.md presente (nombre exacto de EP2-Caso-VidalStore.pdf pág. 23 y 24).")
+        elif os.path.exists(pol_ret_md):
+            check_warn("Existe docs/politicas-retencion.md pero EP2-Caso-VidalStore.pdf (pág. 23 y 24) y L8.pdf (pág. 52) piden el nombre 'docs/politicas.md'.")
+
+        # Verificar textos desactualizados o nombres propios en docs/ (Regla 14)
+        repos_md = os.path.join(docs_dir, "repositorios.md")
+        modelo_md = os.path.join(docs_dir, "modelo-de-datos.md")
+        for doc_path in [repos_md, modelo_md]:
+            if os.path.exists(doc_path):
+                d_txt = read_content(doc_path)
+                rel_d = os.path.relpath(doc_path, BASE_DIR)
+                if "no incluye el driver `pg`" in d_txt or "no expone endpoints CRUD" in d_txt or "todavía no declara un consumidor" in d_txt:
+                    check_warn(f"{rel_d} contiene notas de 'Estado conocido' desactualizadas que contradicen el código ya implementado.")
+                if re.search(r"\b(David|Oscar|Ivan|Iván)\b", d_txt):
+                    check_warn(f"{rel_d} contiene nombres propios de integrantes (Regla 14 de neutralidad técnica).")
 
 def audit_hygiene():
     print_header("5. HIGIENE DE SECRETOS Y VARIABLES DE ENTORNO")

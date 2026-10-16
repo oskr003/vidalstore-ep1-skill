@@ -521,35 +521,32 @@ El Laboratorio L8 y su clase pre-laboratorio L8A cierran la Unidad 2 cubriendo e
 └────────────────────────┘      └───────────────────────────────┘      └────────────────────────┘
 ```
 
-### Síntesis de Decisiones de Arquitectura L8 / L8A:
-1. **Clúster con Descubrimiento Automático (`cluster.conf`)**:
-   - `rabbit1` y `rabbit2` comparten `RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_COOKIE}` y montan `cluster.conf` en `/etc/rabbitmq/conf.d/20-cluster.conf:ro`.
+### Síntesis de Decisiones de Arquitectura L8 / L8A y `EP2-Caso-VidalStore.pdf`:
+1. **Clúster con Descubrimiento Automático (`cluster.conf`) y Khepri en RabbitMQ 4.3**:
+   - `rabbit1`/`rabbitmq1` y `rabbit2`/`rabbitmq2` comparten `RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_COOKIE}` y montan `cluster.conf` en `/etc/rabbitmq/conf.d/20-cluster.conf:ro`.
    - `rabbit2` **no lleva `depends_on`** de `rabbit1` para evitar bloqueos mutuos (*deadlocks*) en arranque o recreación.
+   - En RabbitMQ 4.3 el almacén de metadatos es **Khepri (Raft)** (`rabbitmq-diagnostics metadata_store_status`), por lo que `cluster_partition_handling = autoheal` ya no aplica y ante caída de 1 nodo las operaciones de topología fallan a los ~30s con código `75` (`TEMPFAIL: Khepri cluster could be in minority`).
    - En caso de desincronización, rescate con los 4 comandos en `rabbit2`: `stop_app`, `reset`, `join_cluster rabbit@rabbit1`, `start_app` (**prohibido `reset` en `rabbit1`**).
 2. **Quorum Queues y Quórum Raft**:
    - Argumento inmutable `'x-queue-type': 'quorum'` en todas las colas de trabajo y DLQ. Colas espejo (`ha-mode: all`) eliminadas en RabbitMQ 4.0.
    - Cuenta de la mayoría: $\lfloor N/2 \rfloor + 1$. Con 2 nodos, la mayoría es 2; **2 nodos toleran 0 caídas**.
    - Al apagar `rabbit2`, `/api/queues` muestra `state: minority`. `rabbitmqctl list_queues state` muestra `running` porque solo mide el proceso local de Erlang.
    - `sendToQueue` sin confirmaciones engaña devolviendo `true` (solo buffer del socket TCP local). Se exige `confirmChannel` para detectar `confirm_timeout`.
-   - **Respuesta de defensa**: 2 nodos otorgan durabilidad física distribuida y recuperación automática, no alta disponibilidad (la alta disponibilidad requiere mínimo 3 nodos impares).
+   - **Respuesta de defensa**: *"Dos nodos me dan durabilidad y recuperación automática, no alta disponibilidad. La alta disponibilidad empieza en tres, porque Raft necesita mayoría y la mayoría de dos es dos."*
 3. **Microservicio Administrador (`vidalstore-admin` :3020)**:
-   - **2 Protocolos**: AMQP (:5672) para mutaciones (`assertQueue`, `deleteQueue`, `assertExchange`, etc.) y HTTP Management API (:15672) para lecturas (`/api/queues`, `/api/overview`).
-   - Conexión TCP persistente única; canal AMQP efímero por operación con `canal.on('error', () => undefined)` para que un rechazo no afecte a otros clientes ni tumbe a Node.js.
+   - **Protocolos (`EP2-Caso-VidalStore.pdf` pág. 12 y 21)**: El enunciado permite realizar las escrituras por AMQP (`:5672`) o por la API HTTP de administración (`:15672`), mientras que los listados (`GET`) van siempre por HTTP (`:15672`). `RabbitAdminService` soporta ambos: usa `request()` contra `:15672/api/...` en los endpoints REST (manejando `204 No Content`) y cuenta con `conCanalEfimero()`, `declararColaAmqp()`, `eliminarColaAmqp()` y `traducir()` sobre canales AMQP efímeros con `canal.on('error', () => undefined)`.
    - DTOs con `class-validator` y regex estricta (`NOMBRE_VALIDO = /^[a-zA-Z0-9._-]+$/`). `ValidationPipe` global con `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`.
-   - Lógica encapsulada en `RabbitAdminService`: el controlador no habla con `amqplib`.
-   - Método `traducir()`: `NOT_FOUND` $\rightarrow$ 404, `PRECONDITION_FAILED` $\rightarrow$ 409 Conflict, caída/quórum $\rightarrow$ 503 Service Unavailable (¡cero 500!).
-   - Borrado idempotente con `200 OK`.
-4. **Métricas y Monitoreo del Clúster**:
-   - 6 métricas clave: `messages_ready`, `messages_unacknowledged`, `disk_free` / `disk_alarm`, `mem_used` / `mem_alarm`, `running_nodes` / `partitions`, `object_totals.queues`.
-   - Consultas HTTP a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (con escape `%2F` del vhost `/`).
-   - Alerta prioritaria: `messages_ready` subiendo con 0 consumidores $\rightarrow$ worker caído (revisar logs, jamás reiniciar RabbitMQ ni purgar la cola).
-   - `messages_unacknowledged` pegado en el prefetch $\rightarrow$ consumidor bloqueado o sin `ack`.
-5. **Políticas de Retención Versionadas (`politicas.json`)**:
-   - Evita que colas desatendidas (como la DLQ) saturen el disco y activen la alarma que bloquea todo el broker.
-   - `max-length`, `message-ttl` (se asigna al ENTRAR a la cola, no es retroactivo) y `overflow`.
-   - `drop-head` para la cola de **Avisos** (`notificaciones`): descarta lo más viejo para dar paso a lo nuevo sin enterar al productor.
-   - `reject-publish` para **Auditoría** (`auditoria`) y DLQ: rechaza el nuevo mensaje con nack al productor.
-   - Políticas versionadas en `rabbitmq/politicas.json` y cargadas en Compose con `rabbitmqctl import_definitions`.
+   - Lógica encapsulada en `RabbitAdminService`: el controlador no habla con `amqplib` ni con la API del broker.
+   - Método `traducir()`: `NOT_FOUND` $\rightarrow$ 404, `PRECONDITION_FAILED` / `inequivalent arg` $\rightarrow$ 409 Conflict, caída/quórum $\rightarrow$ 503 Service Unavailable (¡cero 500!). Borrado idempotente con `200 OK`.
+4. **Métricas y Monitoreo del Clúster (L8 §4.1)**:
+   - 6 métricas clave de la EP2: (1) Colas activas (`object_totals.queues`), (2) Mensajes pendientes (`messages_ready`), (3) Mensajes sin confirmar (`messages_unacknowledged`), (4) Tasas de publicación y entrega (`incoming` / `deliver`), (5) Consumidores por cola (`consumers`), y (6) Mensajes en la DLQ (`messages_ready` en `dlq.*` y filas en `mensajes_muertos`).
+   - Consultas HTTP a `/api/overview`, `/api/nodes`, `/api/queues/%2F` (con escape `%2F` del vhost `/`) y `/api/health/checks/alarms`.
+   - Alerta prioritaria: `messages_ready` subiendo con `0` consumidores $\rightarrow$ worker caído. `messages_unacknowledged` pegado en el prefetch $\rightarrow$ consumidor bloqueado o sin `ack`.
+5. **Políticas de Retención Versionadas (`politicas.json` y `docs/politicas.md`)**:
+   - Evita que colas desatendidas saturen el disco/RAM y activen la alarma global del broker.
+   - `max-length` / `max-length-bytes`, `message-ttl` (se asigna al ENTRAR a la cola, no es retroactivo) y `overflow`.
+   - **Criterio de cátedra (`D9`/`L8`)**: `drop-head` con TTL para **Avisos**; `reject-publish` sin TTL para **Trabajo (`auditoria|correos`)**; `reject-publish` con TTL largo para **DLQ**.
+   - **En `vidalstore-plataforma/rabbitmq/politicas.json`**: 3 políticas con patrones anclados `^...$` y `priority: 10` (`retencion-avisos` con `drop-head` y TTL 1h; `retencion-trabajo` sin TTL y con `drop-head` hacia DLX para resguardar el mensaje más antiguo en `mensajes_muertos` dado que los productores no usan publisher confirms; `retencion-dlq` con `reject-publish` y TTL 14 días). Importadas post-arranque con `rabbitmqctl import_definitions` / `scripts/rabbitmq-policies.sh`.
 * Guía de referencia detallada disponible en: [`references/cluster_y_microservicio_administrador_l8_l8a.md`](./references/cluster_y_microservicio_administrador_l8_l8a.md).
 
 ---

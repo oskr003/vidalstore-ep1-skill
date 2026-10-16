@@ -253,12 +253,14 @@ Si una cola no tiene límites y el productor publica sin control, la cola crece 
   docker exec rabbit1 rabbitmqctl set_policy tope-avisos '^avisos$' '{"max-length":100000,"overflow":"drop-head"}' --apply-to queues
   ```
 
-#### Decisión de Negocio: `drop-head` vs `reject-publish`
-| Estrategia de Overflow | Comportamiento al Llegar al Límite | Caso de Uso en VidalStore | Justificación de Arquitectura |
+#### Decisión de Negocio: `drop-head` vs `reject-publish` (Cátedra D9/L8 vs `politicas.json` del Repo)
+| Estrategia de Overflow | Comportamiento al Llegar al Límite | Caso de Uso en Cátedra (D9/L8) | Configuración en `vidalstore-plataforma/rabbitmq/politicas.json` |
 |---|---|---|---|
-| **`drop-head`** | Descarta silenciosamente los mensajes más antiguos del frente de la cola para admitir los nuevos. | **Cola de Avisos** | Las notificaciones son efímeras (un aviso de juego o compra de hace días pierde relevancia ante novedades inmediatas). |
-| **`reject-publish`** | Rechaza las nuevas publicaciones devolviendo un `basic.nack` al productor. | **Cola de Auditoría** | La auditoría es la evidencia legal de las operaciones. Descartar registros silenciosamente es inaceptable; el productor debe enterarse del fallo para reaccionar. |
+| **`drop-head`** | Descarta los mensajes más antiguos del frente de la cola para admitir los nuevos. Si la cola tiene DLX, los desvía a su DLQ con `reason = maxlen`. | **Cola de Avisos (`q.avisos`)** | Usado en **`retencion-avisos`** (`^q\.avisos$`, TTL 1h) y en **`retencion-trabajo`** (`^q\.(auditoria\|correos)$`, sin TTL). En `retencion-trabajo` se usa `drop-head` + DLX para que cualquier desborde caiga a `dlq.auditoria`/`dlq.correos` y `CartasMuertasConsumidor` lo persista en `mensajes_muertos`, ya que los productores no usan `ConfirmChannel`. |
+| **`reject-publish`** | Rechaza las nuevas publicaciones devolviendo un `basic.nack` al productor (admite +1 mensaje en colas quorum y requiere `ConfirmChannel`). | **Cola de Auditoría y DLQ** | Usado en **`retencion-dlq`** (`^dlq\.(avisos\|auditoria\|correos)$`, TTL 14 días, 250.000 msgs) como freno final de disco. |
 
 > [!WARNING]
-> **Trampa Crítica en la DLQ**:  
-> Configurar `drop-head` o un `message-ttl` agresivo en las colas DLQ destruye la evidencia de los fallos, contradiciendo el requerimiento fundamental de trazabilidad del caso. Las DLQs deben tener políticas calibradas para no perder mensajes de error antes de su análisis y reprocesamiento.
+> **Trampa Crítica en la DLQ y en el Anclaje Regex (`^...$`)**:  
+> 1. Configurar `drop-head` sin resguardo o un `message-ttl` corto en las colas DLQ destruye la evidencia de los fallos.  
+> 2. En `politicas.json`, todos los patrones llevan ancla de inicio `^` y fin `$` con `priority: 10`: sin `^`, el patrón `q\.avisos` calza dentro de `dlq.avisos` y pisa la política de la DLQ.
+

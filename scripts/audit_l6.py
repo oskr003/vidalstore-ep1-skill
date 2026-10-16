@@ -60,43 +60,45 @@ def audit_docker():
     else:
         check_pass(f"Docker Daemon activo (Versión: {version_out}).")
 
-    # Comprobar contenedor rabbit1
-    ps_out, _ = run_cmd("docker ps --filter 'name=rabbit1' --format '{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}'")
-    if "rabbit1" in ps_out:
-        check_pass(f"Contenedor rabbit1 activo: {ps_out}")
+    # Comprobar contenedor rabbit1 / rabbitmq1
+    ps_out, _ = run_cmd("docker ps --filter 'name=rabbit' --format '{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}'")
+    if "rabbit" in ps_out:
+        first_line = ps_out.splitlines()[0]
+        container_name = first_line.split("|")[0].strip()
+        check_pass(f"Contenedor RabbitMQ activo: {ps_out}")
         # Comprobar puertos 5672 y 15672
         if "5672" in ps_out and "15672" in ps_out:
             check_pass("Puertos 5672 (AMQP) y 15672 (Management) publicados correctamente.")
         else:
-            check_warn("rabbit1 no tiene ambos puertos (5672 y 15672) publicados.",
-                       "Recrear con: docker run -d --name rabbit1 --hostname rabbit1 -p 5672:5672 -p 15672:15672 -v datos-rabbit:/var/lib/rabbitmq rabbitmq:4.3-management")
+            check_warn(f"{container_name} no tiene ambos puertos (5672 y 15672) publicados.",
+                       "Recrear con: docker compose up -d --wait (o docker run -d --name rabbit1 --hostname rabbit1 -p 5672:5672 -p 15672:15672 -v datos-rabbit:/var/lib/rabbitmq rabbitmq:4.3-management)")
 
         # Comprobar nodename
-        node_out, ncode = run_cmd("docker exec rabbit1 rabbitmqctl eval 'node().'")
-        if "rabbit@rabbit1" in node_out:
+        node_out, ncode = run_cmd(f"docker exec {container_name} rabbitmqctl eval 'node().'")
+        if "rabbit@rabbit1" in node_out or "rabbit@rabbitmq1" in node_out:
             check_pass(f"Nodo Erlang tiene nombre estable y persistente: {node_out.strip()}.")
         else:
-            check_fail(f"rabbit1 no tiene hostname fijo. Nodo actual: {node_out.strip()}.",
-                       "Falta la bandera '--hostname rabbit1'. Sin esto se pierden colas al recrear (D7 Slide 11).")
+            check_fail(f"{container_name} no tiene hostname fijo. Nodo actual: {node_out.strip()}.",
+                       "Falta la bandera 'hostname: rabbit1' / 'hostname: rabbitmq1'. Sin esto se pierden colas al recrear (D7 Slide 11).")
     else:
         # Verificar si está en Exited o Created
-        ps_all, _ = run_cmd("docker ps -a --filter 'name=rabbit1' --format '{{.Names}}|{{.Status}}'")
-        if "rabbit1" in ps_all:
-            check_warn(f"Contenedor rabbit1 existe pero está detenido o en Created: {ps_all}",
-                       "Revisar 'docker logs rabbit1' o si hubo colisión de puertos (D7 Slide 9). Iniciar con 'docker start rabbit1'.")
+        ps_all, _ = run_cmd("docker ps -a --filter 'name=rabbit' --format '{{.Names}}|{{.Status}}'")
+        if "rabbit" in ps_all:
+            check_warn(f"Contenedor RabbitMQ existe pero está detenido o en Created: {ps_all}",
+                       "Revisar 'docker logs' o iniciar con 'docker compose up -d --wait'.")
         else:
-            check_fail("Contenedor rabbit1 no existe.",
-                       "Ejecutar: docker run -d --name rabbit1 --hostname rabbit1 -p 5672:5672 -p 15672:15672 -v datos-rabbit:/var/lib/rabbitmq rabbitmq:4.3-management")
+            check_warn("Contenedor RabbitMQ no está corriendo actualmente (sistema apagado).",
+                       "Para levantar el clúster: 'cd vidalstore-plataforma && docker compose up -d --wait'.")
 
-    # Comprobar contenedor postgres1
-    pg_out, _ = run_cmd("docker ps --filter 'name=postgres1' --format '{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}'")
-    if "postgres1" in pg_out:
-        check_pass(f"Contenedor postgres1 activo: {pg_out}")
+    # Comprobar contenedor postgres
+    pg_out, _ = run_cmd("docker ps --filter 'name=postgres' --format '{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}'")
+    if "postgres" in pg_out:
+        check_pass(f"Contenedor PostgreSQL activo: {pg_out}")
         if "5432" in pg_out:
             check_pass("Puerto 5432 publicado correctamente.")
     else:
-        check_warn("Contenedor postgres1 no encontrado en ejecución.",
-                   "Para L6 Tramo 2: docker run -d --name postgres1 -e POSTGRES_USER=biblioteca -e POSTGRES_PASSWORD=biblioteca -e POSTGRES_DB=biblioteca -p 5432:5432 -v datos-postgres:/var/lib/postgresql postgres:18")
+        check_warn("Contenedor PostgreSQL no encontrado en ejecución (sistema apagado).",
+                   "Para levantar con Compose: 'cd vidalstore-plataforma && docker compose up -d --wait'.")
 
 def audit_topologia():
     print_header("2. AUDITORÍA DE TOPOLOGÍA CENTRALIZADA (L6 REGLA 3)")

@@ -515,26 +515,29 @@ Este documento consolida:
 
 ---
 
-### J.10. ¿Qué verifica el comando `rabbitmq-diagnostics check_if_node_is_quorum_critical` y por qué termina con código de salida 69?
+### J.10. ¿Qué verifica el comando `rabbitmq-diagnostics check_if_node_is_quorum_critical`, por qué termina con código de salida 69, y qué rol cumple Khepri (`rabbitmq_metadata`) en RabbitMQ 4.3?
 * **Respuesta Técnica**:
-  > "Verifica de forma preventiva si la detención del nodo actual provocaría que alguna cola quorum o grupo de metadatos pierda su quórum de mayoría.  
-  > En un clúster de 2 nodos, lista todas las colas de trabajo, las 3 DLQ y `rabbitmq_metadata`, indicando que todas quedarán *unavailable* si `rabbit1` se detiene. Finaliza con código de error **69** a propósito porque actúa como sonda de diagnóstico de infraestructura para alertar a monitores automatizados de que el nodo es un punto único de falla para el quórum."
+  > "Verifica de forma preventiva si la detención del nodo actual provocaría que alguna cola quorum o el almacén de metadatos pierda su quórum de mayoría.  
+  > En un clúster de 2 nodos, lista todas las colas de trabajo, las 3 DLQ y **`rabbitmq_metadata`**, indicando que todas quedarán *unavailable* si `rabbit1` se detiene. Finaliza con código de salida **69** a propósito porque es un chequeo que encontró un riesgo crítico.  
+  > Esa última línea (`rabbitmq_metadata`) se debe a que en RabbitMQ 4.3 los metadatos del clúster ya no viven en Mnesia sino en **Khepri (un grupo Raft)**, consultable con `rabbitmq-diagnostics metadata_store_status`. Por eso, con un nodo caído tampoco se pueden crear colas ni exchanges nuevos: el intento expira a los ~30 segundos con código `75` (`TEMPFAIL: Khepri cluster could be in minority`)."
 
 ---
 
-### J.11. ¿Por qué el `RabbitAdminService` abre una sola conexión TCP pero abre un canal AMQP nuevo por cada operación?
+### J.11. ¿Cómo se comunica `RabbitAdminService` con el broker (AMQP `:5672` vs HTTP `:15672`) y por qué abre un canal AMQP efímero por operación?
 * **Respuesta Técnica**:
-  > "Abrir una conexión TCP AMQP es costoso en CPU y latencia (apretón de manos de red, autenticación, negociación de heartbeats); por eso se mantiene una sola conexión persistente abierta al arrancar el servicio.  
-  > Los canales AMQP, en cambio, son multiplexaciones lógicas ligeras sobre ese mismo socket. Se abre un canal por operación porque **cuando RabbitMQ rechaza un comando (ej. cola inexistente o argumentos inválidos), cierra el canal AMQP entero**. Si el canal fuera compartido entre todas las peticiones, el error de un cliente destruiría las transacciones en vuelo de todos los demás. Además, se registra `canal.on('error', () => undefined)` para que el cierre del canal no tumbe el proceso de Node.js."
+  > "Según `EP2-Caso-VidalStore.pdf` (§3.6 y §4.5), los listados (`GET`) van siempre por la **API HTTP de Management (`:15672`)** porque el protocolo AMQP no tiene una operación para listar todas las colas, mientras que para las escrituras el grupo puede elegir entre AMQP (`:5672`) o la API HTTP (`:15672`).  
+  > En nuestro `RabbitAdminService` implementamos ambos mecanismos:
+  > * Los endpoints REST (`crearCola`, `eliminarCola`, `crearExchange`, `eliminarExchange`, `crearBinding`, `eliminarBinding`) operan mediante `this.request(...)` contra la API HTTP (`:15672/api/...`), manejando respuestas `204 No Content` y traduciendo `400 precondition_failed` a `409 Conflict`, `404` a `NotFoundException` y timeouts/caídas a `503 ServiceUnavailableException`.
+  > * Adicionalmente, para operaciones sobre el protocolo AMQP (`:5672`), mantenemos una sola conexión TCP persistente (porque el handshake AMQP es costoso) y abrimos un **canal efímero por operación (`conCanalEfimero`)**. Esto es vital porque cuando RabbitMQ rechaza una operación AMQP (como `NOT_FOUND` o `PRECONDITION_FAILED`), **cierra el canal entero**; usar un canal por operación con `canal.on('error', ...)` evita que el rechazo de un cliente mate el canal de otros usuarios o tumbe el proceso de Node.js."
 
 ---
 
-### J.12. En el microservicio administrador, ¿cómo mapea el método `traducir()` los errores nativos de AMQP a códigos HTTP REST?
+### J.12. En el microservicio administrador, ¿cómo mapea el método `traducir()` los errores nativos de AMQP y de la Management API a códigos HTTP REST?
 * **Respuesta Técnica**:
-  > "Mapea las excepciones de `amqplib` a excepciones semánticas de NestJS:  
-  > * Mensajes con `NOT_FOUND` (ej. crear binding sobre una cola que no existe) $\rightarrow$ **`404 Not Found`**.  
-  > * Mensajes con `PRECONDITION_FAILED` (ej. redeclarar una cola quorum existente como classic) $\rightarrow$ **`409 Conflict`**.  
-  > * Caída del broker, timeouts o clúster sin quórum Raft $\rightarrow$ **`503 Service Unavailable`**.  
+  > "Mapea las excepciones de `amqplib` y de la API HTTP a excepciones semánticas de NestJS:  
+  > * Mensajes con `NOT_FOUND` o HTTP `404` (ej. crear binding sobre una cola que no existe) $\rightarrow$ **`404 Not Found`**.  
+  > * Mensajes con `PRECONDITION_FAILED` o `inequivalent arg` (ej. redeclarar una cola quorum existente como classic) $\rightarrow$ **`409 Conflict`**.  
+  > * Caída del broker, timeouts o clúster sin mayoría Raft/Khepri $\rightarrow$ **`503 Service Unavailable`**.  
   > Esto evita arrojar errores 500 ciegos, entregando al cliente el código de estado HTTP exacto según la especificación REST."
 
 ---
@@ -564,25 +567,27 @@ Este documento consolida:
 
 ---
 
-### J.16. ¿Por qué una cola sin límite puede llevarse por delante al sistema entero, y qué diferencia práctica existe entre `overflow: drop-head` y `overflow: reject-publish` en una cola quorum?
+### J.16. ¿Por qué una cola sin límite puede llevarse por delante al sistema entero, qué diferencia práctica existe entre `overflow: drop-head` y `overflow: reject-publish` en una cola quorum, y cómo está configurado `politicas.json`?
 * **Respuesta Técnica**:
   > "Si una cola crece sin límite (ej. la DLQ acumulando mensajes con Postgres caído), satura la memoria o el disco del nodo. Al alcanzar el umbral, RabbitMQ levanta una **alarma de disco o memoria y bloquea todas las publicaciones en todo el broker**, deteniendo compras y catálogos de todo VidalStore.  
-  > * **`drop-head`**: Descarta el mensaje más viejo para hacerle espacio al nuevo; el productor recibe confirmación normal y no se entera. Se usa en **Avisos** (`notificaciones`) donde lo reciente importa más que lo histórico.  
-  > * **`reject-publish`**: Rechaza el mensaje entrante con un nack al productor. Se usa en **Auditoría** (`auditoria`) y transacciones donde ninguna pérdida silenciosa es admisible."
+  > * **`drop-head`**: Descarta el mensaje más viejo por la cabeza de la cola para hacerle espacio al nuevo; el productor recibe confirmación normal y no se entera. Si la cola tiene `x-dead-letter-exchange`, el mensaje expulsado salta al DLX con `reason = maxlen`.  
+  > * **`reject-publish`**: Rechaza el mensaje entrante nuevo con un `nack` al productor (en colas quorum admite +1 mensaje sobre el límite antes de rechazar, y requiere que el productor escuche con `ConfirmChannel` para enterarse).  
+  > * **En cátedra (D9 y L8 §5.5)**: Se enseña `drop-head` con TTL para **Avisos** (porque un aviso viejo ya no sirve) y `reject-publish` sin TTL para **Trabajo (`auditoria|correos`)** (para no perder evidencia en silencio).  
+  > * **En `vidalstore-plataforma/rabbitmq/politicas.json`**: Definimos `retencion-avisos` (`^q\.avisos$`, TTL 1h, `drop-head`), `retencion-trabajo` (`^q\.(auditoria|correos)$`, sin TTL, `drop-head` hacia DLX para que cualquier desborde caiga a `dlq.auditoria`/`dlq.correos` con motivo `maxlen` y `CartasMuertasConsumidor` lo persista en `mensajes_muertos`, ya que los productores no usan publisher confirms) y `retencion-dlq` (`^dlq\.(avisos|auditoria|correos)$`, TTL 14 días, `reject-publish` como freno final de disco)."
 
 ---
 
 ### J.17. ¿Por qué el tiempo de caducidad `message-ttl` no elimina los mensajes viejos que ya estaban en la cola antes de aplicar la política?
 * **Respuesta Técnica**:
-  > "Porque en RabbitMQ el temporizador de caducidad se calcula y asigna individualmente a cada mensaje **en el momento exacto en que ingresa a la cola**. Si una cola ya tiene mensajes previos y se le aplica una política con `message-ttl`, dichos mensajes no poseen la marca de tiempo calculada y **no caducan retroactivamente**. Solo comenzarán a caducar los mensajes que ingresen después de que la política esté activa."
+  > "Porque en RabbitMQ el temporizador de caducidad se calcula y asigna individualmente a cada mensaje **en el momento exacto en que ingresa a la cola**. Si una cola ya tiene mensajes previos y se le aplica una política con `message-ttl`, dichos mensajes no poseen la marca de tiempo calculada y **no caducan retroactivamente**. Solo comenzarán a caducar los mensajes que ingresen después de que la política esté activa (para vaciar una cola llena a propósito se usa `rabbitmqctl purge_queue`)."
 
 ---
 
-### J.18. En la cola DLQ (`.dlq`), ¿cuáles son los dos argumentos técnicos para elegir entre `reject-publish` y `drop-head`, y cómo defiendes tu elección?
+### J.18. En la cola DLQ (`dlq.*`), ¿cuáles son los dos argumentos técnicos para elegir entre `reject-publish` y `drop-head`, y por qué los patrones de `politicas.json` llevan `^` y `$` con `priority: 10`?
 * **Respuesta Técnica**:
-  > "* **A favor de `reject-publish`**: Si una DLQ alcanza los 1000 mensajes, el sistema lleva horas fallando. El problema no es dónde guardar el mensaje 1001, sino que el fallo se haga visible ruidosamente en los productores y en las alarmas de monitoreo para exigir intervención inmediata, en vez de continuar tragando basura en silencio.  
-  > * **A favor de `drop-head`**: Prefiere conservar siempre los 1000 mensajes más recientes descartando los antiguos, garantizando que el equipo forense disponga de los errores frescos para depurar y reproducir la causa raíz.  
-  > Ambas son técnicamente válidas; en VidalStore defendemos `reject-publish` en la DLQ para aplicar el principio de *Fail-Fast* y proteger la consistencia global del clúster."
+  > "* **A favor de `reject-publish` en DLQ**: Si una DLQ alcanza su límite, el sistema lleva horas o días roto. El problema no es dónde guardar el mensaje siguiente, sino que el fallo se note fuerte en lugar de seguir tragando en silencio.  
+  > * **A favor de `drop-head` en DLQ**: Prefiere conservar siempre los mensajes muertos más recientes descartando los antiguos, garantizando que el equipo tenga los errores frescos para diagnosticar.  
+  > * **Anclaje `^...$` y `priority: 10`**: Sin el ancla inicial `^`, el patrón `q\.avisos` calzaría como subcadena dentro de `dlq.avisos`, pisando la política de la DLQ si tienen la misma prioridad. Y usamos `priority: 10` para que cualquier política de prueba creada en vivo con prioridad `0` o `1` no sobreescriba las políticas de las 6 colas operativas."
 
 
 

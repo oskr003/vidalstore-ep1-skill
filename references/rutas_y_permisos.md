@@ -109,7 +109,7 @@ En el enunciado **`EP1-Caso-VidalStore.pdf`** (punto 4.3) y el documento de acla
 
 ---
 
-### 8. `GET /v1/auditoria` *(Para Grupos de 3 Integrantes)*
+### 8. `GET /v1/auditoria` *(Para Grupos de 3 Integrantes en EP1)*
 * **Capa / Destino**: Microservicio de Auditoría (vía Gateway/BFF).
 * **Mecanismo de Autorización**: **Grupo** (`cognito:groups`).
 * **Roles Permitidos**: `administradores`.
@@ -118,3 +118,41 @@ En el enunciado **`EP1-Caso-VidalStore.pdf`** (punto 4.3) y el documento de acla
 * **Respuestas de Error**:
   - `401 Unauthorized`: Sin token válido.
   - `403 Forbidden`: Invocado por usuarios no administradores.
+
+---
+
+## 2. Matriz de Endpoints de la Unidad 2 / EP2 (`vidalstore-admin` `:3020` y `vidalstore-eventos` `:3010`)
+
+Según [`EP2-Caso-VidalStore.pdf`](file:///Users/oscar/Downloads/DUOC/CloudNative/Evaluacion%202/EP2-Caso-VidalStore.pdf) (§4.2, §4.5 y §4.9) y [`L8.pdf`](file:///Users/oscar/Downloads/DUOC/CloudNative/Evaluacion%202/material/L8.pdf) (Tramo 3):
+- Todas las rutas de `vidalstore-admin` (`:3020`) están protegidas directamente en la clase `AdminController` con `@UseGuards(AuthGuard, RolesGuard)` y `@Roles('ADMIN', 'administradores')` (sin depender del Gateway, aunque `vidalstore-gateway` en `:8080` también expone un proxy hacia `/v1/admin/*` para el dashboard de Angular).
+- `RolGuard` / `RolesGuard` lee los metadatos tanto del método como de la clase (`ctx.getHandler() ?? ctx.getClass() ?? []`).
+
+### 2.1 Las 8 Rutas Obligatorias de Administración de Topología (`EP2-Caso-VidalStore.pdf` §4.5 · IE6, IE7, IE8, IE17)
+
+| # | Método y Ruta | Qué hace | Cuerpo (`@Body()`) Validado con `class-validator` | Códigos HTTP |
+|:---:|---|---|---|---|
+| **1** | `GET /v1/admin/colas`<br/>*(y alias `/v1/admin/queues`)* | Lista las colas con `name`, `type`, `state`, `messages_ready`, `messages_unacknowledged`, `consumers`. | — | `200`, `401`, `403`, `503` |
+| **2** | `POST /v1/admin/colas` | Crea o declara una cola (por omisión `quorum`). | `{ nombre, tipo?, durable?, autoDelete?, arguments? }` (`nombre` con regex `/^[a-zA-Z0-9._-]+$/`). | `201`, `400`, `401`, `403`, `409` (`PRECONDITION_FAILED`), `503` |
+| **3** | `DELETE /v1/admin/colas/:nombre` | Elimina una cola de forma idempotente. | — | `200`, `401`, `403`, `503` |
+| **4** | `GET /v1/admin/exchanges` | Lista los exchanges con `name`, `type`, `durable`. | — | `200`, `401`, `403`, `503` |
+| **5** | `POST /v1/admin/exchanges` | Crea o declara un exchange. | `{ nombre, tipo, durable?, autoDelete?, arguments? }` (`tipo` en `['direct', 'topic', 'fanout', 'headers']`). | `201`, `400`, `401`, `403`, `409`, `503` |
+| **6** | `DELETE /v1/admin/exchanges/:nombre` | Elimina un exchange de forma idempotente. | — | `200`, `401`, `403`, `503` |
+| **7** | `POST /v1/admin/bindings` | Crea un binding entre un exchange y una cola. | En enunciado (`EP2` pág. 20 / `L8` pág. 25): `{ exchange, cola, routingKey }`.<br/>En `CrearBindingDto` actual: `{ origen, destino, tipoDestino?, routingKey? }`. | `201`, `400`, `401`, `403`, `404` (`NOT_FOUND`), `503` |
+| **8** | `DELETE /v1/admin/bindings` | Elimina un binding (DELETE con cuerpo porque se identifica por la terna exchange + cola + routingKey). | Mismo DTO que `POST /v1/admin/bindings`. | `200`, `400`, `401`, `403`, `404`, `503` |
+
+### 2.2 Ruta Adicional Obligatoria para Grupos de 3 Integrantes (`EP2-Caso-VidalStore.pdf` §4.9)
+
+| Método y Ruta | Qué hace | Especificación Oficial (§4.9 pág. 24–25) vs Implementación Actual | Códigos HTTP |
+|---|---|---|---|
+| `POST /v1/admin/dlq/:id/reproceso` | Solicita el reproceso controlado de un mensaje muerto registrado en `mensajes_muertos`. | • **Según `EP2-Caso-VidalStore.pdf` §4.9**: `vidalstore-admin` no toca `mensajes_muertos`; publica en `vidalstore.comandos` con `dlq.reprocesar` `{ mensajeMuertoId, payloadCorregido?, solicitadoPor }`. `vidalstore-eventos` consume de su cola `q.reprocesar`, republica al exchange original con su `routing_key` y `x-evento-id` original, y marca `reprocesada = true`.<br/>• **Implementación actual**: `vidalstore-admin` consulta `mensajes_muertos`, publica en `vidalstore.dlx` con `dlq.reprocesar` y marca `reprocesada = true` (400 si ya estaba reprocesada). | `200`/`201`, `400`, `401`, `403`, `404`, `503` |
+
+### 2.3 Endpoints Complementarios de Observabilidad y Salud
+
+| Microservicio | Método y Ruta | Propósito |
+|---|---|---|
+| `vidalstore-admin` (`:3020`) | `GET /v1/admin/queues/:name` | Detalle individual de una cola (`404` si no existe). |
+| `vidalstore-admin` (`:3020`) | `GET /v1/admin/cluster` | Resumen global del clúster (`/api/overview`: versión, nodos, totales de colas y tasas). |
+| `vidalstore-admin` (`:3020`) | `GET /v1/admin/mensajes-muertos`<br/>`DELETE /v1/admin/mensajes-muertos/:id` | Listado y depuración de cartas muertas registradas en PostgreSQL. |
+| `vidalstore-admin` (`:3020`) | `POST /v1/admin/eventos`<br/>`POST /v1/admin/comandos` | Publicación administrativa de eventos (`vidalstore.eventos`) o comandos (`vidalstore.comandos`). |
+| `vidalstore-eventos` (`:3010`) | `GET /salud` | Único endpoint HTTP del worker (`EP2-Caso-VidalStore.pdf` §4.2 pág. 16). Verifica que el canal con RabbitMQ esté abierto y que PostgreSQL responda `SELECT 1` (`200 OK` o `503 Service Unavailable`). Usado por el `healthcheck` de Docker Compose. |
+

@@ -462,10 +462,19 @@ Las políticas definidas manualmente en la terminal con `rabbitmqctl set_policy`
 }
 ```
 
-Carga en Compose mediante el comando:
+Carga en Compose post-arranque mediante `scripts/rabbitmq-policies.sh` o el comando:
 ```bash
 docker compose exec rabbit1 rabbitmqctl import_definitions /etc/rabbitmq/politicas.json
 ```
+
+#### Configuración en `vidalstore-plataforma/rabbitmq/politicas.json` y Decisiones para Defender en Vivo:
+- En `vidalstore-plataforma/rabbitmq/politicas.json` se declaran las 3 políticas con `apply-to: "queues"` y `priority: 10`:
+  1. `retencion-avisos` (`^q\.avisos$`): `max-length: 10000`, `max-length-bytes: 20971520` (20 MiB), `overflow: "drop-head"`, `message-ttl: 3600000` (1 h).
+  2. `retencion-trabajo` (`^q\.(auditoria|correos)$`): `max-length: 50000`, `max-length-bytes: 104857600` (100 MiB), `overflow: "drop-head"`, **sin `message-ttl`**. *(En cátedra `L8.pdf` §5.5 se usa `reject-publish`; en `politicas.json` del repo se eligió `drop-head` + DLX porque los productores no usan `ConfirmChannel`: así el mensaje más antiguo expulsado salta a `dlq.auditoria`/`dlq.correos` con `reason = maxlen` y `CartasMuertasConsumidor` lo persiste en PostgreSQL sin pérdida silenciosa).*
+  3. `retencion-dlq` (`^dlq\.(avisos|auditoria|correos)$`): `max-length: 250000`, `max-length-bytes: 524288000` (500 MiB), `overflow: "reject-publish"`, `message-ttl: 1209600000` (14 días).
+- **Por qué NO se carga con `load_definitions` en `cluster.conf` al arrancar en blanco**: En RabbitMQ 4.3, si un nodo recién nacido importa un archivo de definiciones durante el arranque inicial, **omite la creación del vhost `/` y del usuario `RABBITMQ_DEFAULT_USER`**, dejando a los microservicios sin acceso (`ACCESS_REFUSED`).
+- **Por qué los patrones Regex van anclados (`^...$`) y con `priority: 10`**: Sin el ancla inicial `^`, el patrón `q\.avisos` calzaría dentro de `dlq.avisos`, pisando la política de la DLQ si tienen igual prioridad. Y `priority: 10` impide que políticas de prueba con prioridad `0` o `1` sobreescriban las políticas de las 6 colas.
+- **Khepri (Raft) en RabbitMQ 4.3**: Los metadatos del clúster (`rabbitmq_metadata`) se almacenan en Khepri (`rabbitmq-diagnostics metadata_store_status`), por lo que `cluster_partition_handling = autoheal` ya no aplica en 4.3, y al caer 1 de 2 nodos las operaciones de topología o políticas fallan tras ~30s con código `75` (`TEMPFAIL: Khepri cluster could be in minority`).
 
 ### 6.6 El Debate Técnico de la DLQ: `reject-publish` vs `drop-head`
 En la presentación se exige fundamentar la política asignada a la DLQ:
