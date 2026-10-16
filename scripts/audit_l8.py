@@ -200,7 +200,9 @@ def audit_admin_microservice():
     binding_dto = find_file("crear-binding.dto.ts") or find_file("binding.dto.ts")
     if binding_dto:
         b_content = read_content(binding_dto)
-        if "origen" in b_content and "exchange" not in b_content.split("class")[1]:
+        if "exchange" in b_content and "cola" in b_content:
+            check_pass("CrearBindingDto soporta formato '{ exchange, cola, routingKey }' (EP2-Caso-VidalStore.pdf pág. 20)")
+        elif "origen" in b_content and "exchange" not in b_content:
             check_warn("CrearBindingDto usa 'origen' y 'destino', pero EP2-Caso-VidalStore.pdf (pág. 20) y L8.pdf (pág. 25) especifican '{ exchange, cola, routingKey }'.",
                        "Con forbidNonWhitelisted: true, un curl del docente enviando '{ exchange, cola, routingKey }' recibirá 400 Bad Request si no se admiten ambos nombres.")
 
