@@ -878,7 +878,7 @@ sequenceDiagram
 
 > **Pregunta de Defensa:** _"Explica el recorrido completo de un evento desde que el usuario compra un juego en la pantalla hasta que queda registrado en PostgreSQL."_
 
-> ⚡ **Resumen Técnico:** El usuario pulsa "Comprar" en Angular (`:4200`). El Gateway (`:8080`) valida el JWT contra Cognito y lo reenvía al BFF (`:3000`). El BFF autoriza y llama a `POST /v1/compras` en el microservicio de licencias (`:3002`) propagando el token. El microservicio extrae `req.user.sub`, inserta la licencia en PostgreSQL en su esquema propio con el índice parcial `WHERE estado = 'activa'`, responde sincrónicamente `201 Created` al usuario, y acto seguido invoca a `publicador.mjs`. Este publica el evento `compra.realizada` al exchange topic `vidalstore.eventos` con headers persistentes (`x-evento-id`, `x-emitido-en`). RabbitMQ distribuye el mensaje a las colas `cola-avisos` (binding `compra.*`) y `cola-auditoria` (binding `#`). El worker (`vidalstore-eventos`), que corre con `prefetch(1)`, recibe el mensaje, valida los campos con `esDelMensaje`, persiste con TypeORM en `eventos_auditoria` (columna `payload jsonb`) y `notificaciones` (columna `estado CHECK`), y recién tras el insert exitoso envía `canal.ack(mensaje)` a RabbitMQ.
+> ⚡ **Resumen Técnico:** El usuario pulsa "Comprar" en Angular (`:4200`). El Gateway (`:8080`) valida el JWT contra Cognito y lo reenvía al BFF (`:3001`). El BFF autoriza y llama a `POST /v1/compras` en el microservicio de compras (`:3003`) y biblioteca (`:3004`) propagando el token. El microservicio extrae `req.user.sub`, inserta la licencia en PostgreSQL con el índice parcial `WHERE estado = 'activa'`, responde sincrónicamente `201 Created` al usuario y, cumpliendo la Regla L6A (*"Publica el que escribe, y solo tras escribir con éxito"*), invoca a `MensajeriaProductorService`. Este publica el evento `compra.realizada` al exchange topic `vidalstore.eventos` (`persistent: true`) con headers (`x-evento-id`, `x-emitido-en`) y el comando `correo.enviar` a `vidalstore.comandos` (direct). RabbitMQ distribuye el evento a las colas `q.avisos` (binding `compra.*`) y `q.auditoria` (binding `#`), y el comando a `q.correos`. El worker (`vidalstore-eventos`), que corre con `prefetch(1)`, recibe cada mensaje, persiste con TypeORM en `eventos_auditoria` (columna `payload jsonb`) y `notificaciones` (columna `estado CHECK`), y recién tras el insert exitoso envía `canal.ack(mensaje)` a RabbitMQ.
 
 ```mermaid
 sequenceDiagram
@@ -886,9 +886,9 @@ sequenceDiagram
     actor Usuario
     participant Angular as Frontend (:4200)
     participant Gateway as API Gateway (:8080)
-    participant BFF as BFF (:3000)
-    participant Licencias as MS Licencias (:3002)
-    participant Postgres as PostgreSQL (:5432)
+    participant BFF as BFF (:3001)
+    participant Licencias as MS Compras/Biblio (:3003/3004)
+    participant Postgres as PostgreSQL (:5433->5432)
     participant Rabbit as RabbitMQ (:5672)
     participant Worker as Worker Eventos (:3010)
 
@@ -897,15 +897,15 @@ sequenceDiagram
     Gateway->>BFF: Forward HTTP (Bearer JWT)
     BFF->>Licencias: Forward HTTP (Bearer JWT)
     Licencias->>Licencias: Verifica token y extrae sub
-    Licencias->>Postgres: INSERT INTO licencias.licencias (usuario_sub, juego_id, estado='activa')
-    Postgres-->>Licencias: Licencia creada (id: 482)
-    Licencias-->>BFF: 201 Created { id: 482, juegoId: 10, estado: 'activa' }
+    Licencias->>Postgres: INSERT INTO public.licencias (usuario_sub, juego_id, estado='activa')
+    Postgres-->>Licencias: Licencia creada (UUID)
+    Licencias-->>BFF: 201 Created { id, juegoId, codigoCanje, estado: 'activa' }
     BFF-->>Gateway: 201 Created
     Gateway-->>Angular: 201 Created
     Note over Angular,Usuario: Fin de la vía sincrónica (Usuario ya tiene el juego)
 
     Licencias->>Rabbit: Publica compra.realizada a vidalstore.eventos (persistent: true)
-    Rabbit->>Rabbit: Enruta a cola-auditoria (#) y cola-avisos (compra.*)
+    Rabbit->>Rabbit: Enruta a q.auditoria (#) y q.avisos (compra.*)
     Rabbit->>Worker: Entrega mensaje a AuditoriaConsumidor (prefetch: 1)
     Worker->>Worker: JSON.parse y validación de cabeceras
     Worker->>Postgres: INSERT INTO public.eventos_auditoria (payload jsonb, evento_id UNIQUE)
@@ -920,7 +920,7 @@ sequenceDiagram
 
 > **Pregunta de Defensa:** _"¿Qué ocurre si se publica un mensaje que no es JSON o que tiene datos corruptos? Demuestra la ruta hacia la DLQ."_
 
-> ⚡ **Resumen Técnico:** Un productor publica un mensaje con el cuerpo `{ esto no es JSON valido`. RabbitMQ lo entrega al consumidor. El consumidor ejecuta `JSON.parse(mensaje.content.toString())` dentro de un bloque `try/catch`. La excepción `SyntaxError` es interceptada por la función `esDelMensaje(error)`, la cual determina que es un error intrínseco del dato que reintentar jamás va a solucionar. El consumidor ejecuta inmediatamente `canal.nack(mensaje, false, false)`: el primer `false` indica que solo se descarta este mensaje, y el segundo `false` indica `requeue: false` (NO reencolar). Al tener la cola el argumento `x-dead-letter-exchange: vidalstore.dlx` y `x-dead-letter-routing-key: cola-auditoria`, RabbitMQ aparta el mensaje de la cola de trabajo y lo publica en el DLX direct, el cual lo deposita en `cola-auditoria.dlq`. RabbitMQ le inyecta el encabezado forense `x-death` con motivo `reason: "rejected"` y la routing key original. `CartasMuertasConsumidor` extrae el mensaje de la DLQ, parsea `x-first-death-queue` y lo inserta en la tabla `mensajes_muertos` (columna `payload text`), confirmando con `canal.ack(mensaje)`.
+> ⚡ **Resumen Técnico:** Un productor publica un mensaje con el cuerpo `{ esto no es JSON valido`. RabbitMQ lo entrega al consumidor. El consumidor ejecuta `JSON.parse(mensaje.content.toString())` dentro de un bloque `try/catch`. La excepción `SyntaxError` es interceptada por la función `esDelMensaje(error)`, la cual determina que es un error intrínseco del dato que reintentar jamás va a solucionar. El consumidor ejecuta inmediatamente `canal.nack(mensaje, false, false)`: el primer `false` indica que solo se descarta este mensaje, y el segundo `false` indica `requeue: false` (NO reencolar). Al tener la cola el argumento `x-dead-letter-exchange: vidalstore.dlx` y `x-dead-letter-routing-key: dlq.auditoria`, RabbitMQ aparta el mensaje de la cola de trabajo y lo publica en el DLX direct, el cual lo deposita en `dlq.auditoria`. RabbitMQ le inyecta el encabezado forense `x-death` con motivo `reason: "rejected"` y la routing key original. `CartasMuertasConsumidor` extrae el mensaje de la DLQ, parsea `x-first-death-queue` y lo inserta en la tabla `mensajes_muertos` (columna `payload text`), confirmando con `canal.ack(mensaje)`.
 
 ```mermaid
 sequenceDiagram
@@ -929,17 +929,17 @@ sequenceDiagram
     participant Rabbit as RabbitMQ (:5672)
     participant Worker as Consumidor de Trabajo
     participant DLX as Exchange vidalstore.dlx
-    participant DLQ as cola-auditoria.dlq
+    participant DLQ as dlq.auditoria
     participant DeadLetters as CartasMuertasConsumidor
-    participant Postgres as PostgreSQL (:5432)
+    participant Postgres as PostgreSQL (:5433->5432)
 
     Productor->>Rabbit: Publica payload corrupto '{ esto no es JSON valido'
     Rabbit->>Worker: Entrega mensaje (estado unacked)
     Worker->>Worker: try { JSON.parse(...) } catch (error)
     Note over Worker: SyntaxError detectado: esDelMensaje() = true
     Worker->>Rabbit: canal.nack(mensaje, false, false) [requeue: false]
-    Rabbit->>DLX: Publica con routing key 'cola-auditoria' + cabecera x-death
-    DLX->>DLQ: Almacena mensaje muerto en cola-auditoria.dlq
+    Rabbit->>DLX: Publica con routing key 'dlq.auditoria' + cabecera x-death
+    DLX->>DLQ: Almacena mensaje muerto en dlq.auditoria
     Worker-->>Worker: La cola de trabajo principal sigue fluyendo sin bloqueos
     
     DLQ->>DeadLetters: Entrega mensaje muerto a CartasMuertasConsumidor
@@ -963,8 +963,8 @@ sequenceDiagram
     autonumber
     participant Rabbit as RabbitMQ (:5672)
     participant Worker as AuditoriaConsumidor
-    participant Postgres as PostgreSQL (:5432)
-    participant DLQ as cola-auditoria.dlq
+    participant Postgres as PostgreSQL (:5433->5432)
+    participant DLQ as dlq.auditoria
 
     Rabbit->>Worker: Entrega mensaje válido (prefetch: 1)
     Worker->>Postgres: Intento 1: INSERT INTO eventos_auditoria
@@ -993,7 +993,7 @@ sequenceDiagram
     autonumber
     participant Rabbit as RabbitMQ (:5672)
     participant Worker as Consumidor de Eventos
-    participant Postgres as PostgreSQL (:5432)
+    participant Postgres as PostgreSQL (:5433->5432)
 
     Note over Rabbit,Worker: Entrega 1 (Normal)
     Rabbit->>Worker: Entrega evento (UUID: 1111-2222-3333-4444)
@@ -1020,11 +1020,11 @@ sequenceDiagram
 > **Responsable:** Oscar Garrido · Microservicio Administrador en Puerto `3020`.  
 > **Indicadores Cubiertos:** IE6 (Endpoints REST bien definidos), IE7 (Encapsulación en `RabbitAdminService`), IE8 (Validación estricta de DTOs), IE17 (Demostración administrativa en vivo) e IE18 (Explicación fundamentada de métricas).
 
-> ⚡ **Resumen Técnico (Arquitectura de 2 Protocolos):** `vidalstore-admin` opera como un microservicio independiente de control operativo y observabilidad bajo el principio de Zero Trust. Valida tokens JWT asimétricos con la biblioteca `jose` contra las JWKS públicas de AWS Cognito y extrae la identidad inmutable del operador desde `req.user.sub` (prohibiendo suplantación por body). El acceso está estrictamente protegido a nivel de controlador con `AuthGuard` y `RolesGuard` (`@Roles('ADMIN', 'administradores')`), respondiendo `401 Unauthorized` si el token es ausente o inválido, y `403 Forbidden` si el usuario carece del rol administrativo.
+> ⚡ **Resumen Técnico (Arquitectura de 2 Protocolos):** `vidalstore-admin` opera como un microservicio independiente de control operativo y observabilidad bajo el principio de Zero Trust. Valida tokens JWT asimétricos contra las JWKS públicas de AWS Cognito y extrae la identidad inmutable del operador desde `req.user.sub` (prohibiendo suplantación por body). El acceso está estrictamente protegido a nivel de controlador con `AuthGuard` y `RolesGuard` (`@Roles('ADMIN', 'administradores')`), respondiendo `401 Unauthorized` si el token es ausente o inválido, y `403 Forbidden` si el usuario carece del rol administrativo.
 > 
 > A nivel de integración con RabbitMQ, `RabbitAdminService` implementa una **Arquitectura Híbrida de 2 Protocolos**:
-> 1. **Protocolo HTTP Management API (`http://rabbitmq1:15672/api/*`):** Utilizado para observabilidad, consulta de métricas globales, inspección de topología y operaciones declarativas masivas (`definitions`). Consume respuestas JSON con autenticación básica (`guest:guest` o credenciales de operador).
-> 2. **Protocolo Nativo AMQP 0-9-1 (`amqp://rabbitmq1:5672`):** Utilizado para operaciones transaccionales de bajo nivel, remediación de colas, publicaciones administrativas con confirmación (`confirmChannel`) y el reprocesamiento controlado de cartas muertas hacia `vidalstore.dlx`.
+> 1. **Protocolo HTTP Management API (`http://rabbitmq1:15672/api/*`):** Utilizado para observabilidad, consulta de métricas globales (`/api/queues/%2F`) e inspección de topología y estado del clúster.
+> 2. **Protocolo Nativo AMQP 0-9-1 (`amqp://rabbitmq1:5672`):** Utilizado para mutaciones de topología (`assertQueue`, `deleteQueue`, `assertExchange`, `deleteExchange`, `bindQueue`, `unbindQueue`), publicaciones administrativas y el despacho del comando `dlq.reprocesar` hacia `vidalstore.comandos`.
 
 ### 14.1 Patrón de Canal Efímero y Aislamiento de Fallos en `RabbitAdminService` (IE7)
 
@@ -1057,7 +1057,7 @@ Toda excepción capturada en el servicio es traducida a respuestas semánticas R
 sequenceDiagram
     autonumber
     actor Cliente as Operador / Cliente REST
-    participant Auth as AuthGuard (jose + JWKS)
+    participant Auth as AuthGuard (JWKS)
     participant Roles as RolesGuard (@Roles)
     participant Ctrl as AdminController (:3020)
     participant Pipe as ValidationPipe
@@ -1088,7 +1088,7 @@ sequenceDiagram
     Note over Cliente,RabbitBroker: ================= MÉTRICAS Y OBSERVABILIDAD (IE18) =================
     Cliente->>Ctrl: GET /v1/admin/queues
     Ctrl->>Svc: listarColas()
-    Svc->>RabbitMgmt: GET /api/queues (HTTP Basic Auth)
+    Svc->>RabbitMgmt: GET /api/queues/%2F (HTTP Basic Auth)
     RabbitMgmt-->>Svc: JSON métricas (messages, ready, unacked, consumers)
     Svc-->>Ctrl: QueueSummary[]
     Ctrl-->>Cliente: 200 OK [ { name: 'q.avisos', messages_ready: 0, consumers: 1 }, ... ]
@@ -1149,7 +1149,7 @@ Durante la presentación técnica, el estudiante debe demostrar y explicar en vi
 |---|---|---|
 | **`messages_ready`** | Mensajes listos en cola esperando entrega a un consumidor disponible. | Si este valor crece sostenidamente, indica que la tasa de publicación supera la capacidad de procesamiento de los consumidores, o que el consumidor correspondiente está caído (`consumers: 0`). |
 | **`messages_unacknowledged`** (`unacked`) | Mensajes entregados a los consumidores que aún no han recibido `ack` ni `nack`. | Si este valor se estanca en el límite del `prefetch` (ej. 1), indica que el consumidor está bloqueado en una transacción lenta de PostgreSQL, en un bucle de reintentos o que ocurrió una caída de red antes de confirmar. |
-| **`consumers`** | Cantidad de canales AMQP con suscripción activa (`basic.consume`) sobre la cola. | Si es `0`, la cola no tiene quién procese sus eventos. En VidalStore debe ser al menos `1` para `q.avisos`, `q.auditoria` y `q.correos`. |
+| **`consumers`** | Cantidad de canales AMQP con suscripción activa (`basic.consume`) sobre la cola. | Si es `0`, la cola no tiene quién procese sus eventos. En VidalStore debe ser al menos `1` para `q.avisos`, `q.auditoria`, `q.correos` y `q.reprocesar`. |
 | **`messages`** | Total acumulado en la cola (`messages_ready + messages_unacknowledged`). | Métrica global de saturación utilizada para evaluar alarmas de retención de memoria y políticas de desborde (`overflow`). |
 | **Cartas en `dlq.*`** | Mensajes rechazados sin reencolar (`nack(false, false)`). | Indica fallas funcionales (mensajes mal formados o veneno) o agotamiento de reintentos por caída prolongada de infraestructura. |
 
@@ -1160,7 +1160,7 @@ Durante la presentación técnica, el estudiante debe demostrar y explicar en vi
 > **Requisito Obligatorio:** Grupos de 3 integrantes (David, Oscar e Iván).  
 > **Endpoint:** `POST /v1/admin/dlq/:id/reproceso` en `vidalstore-admin` (:3020).
 
-> ⚡ **Resumen Técnico:** Cuando un mensaje envenenado aterriza en una DLQ y es registrado en la tabla `mensajes_muertos` de PostgreSQL, queda en estado de cuarentena forense. Tras corregir la causa raíz (ej. restablecer PostgreSQL o desplegar un parche de software), el administrador inicia un reprocesamiento controlado vía `POST /v1/admin/dlq/:id/reproceso`. El microservicio valida que el identificador sea un UUID v4 válido (`ParseUUIDPipe`), consulta la base de datos y verifica idempotencia: si la columna `reprocesada` ya es `true`, aborta con `400 Bad Request`. Si está pendiente, republica el payload original hacia `vidalstore.dlx` con routing key `dlq.reprocesar` (`persistent: true`) inyectando metadatos de trazabilidad (`x-reprocesado-por`, `x-reprocesado-en`, `x-mensaje-muerto-id`), y actualiza la fila en PostgreSQL con `reprocesada = true`, `reprocesado_por = adminSub` y marca de tiempo.
+> ⚡ **Resumen Técnico:** Cuando un mensaje envenenado aterriza en una DLQ y es registrado en la tabla `mensajes_muertos` de PostgreSQL, queda en estado de cuarentena forense. Tras corregir la causa raíz (ej. restablecer PostgreSQL o corregir el payload), el administrador inicia un reprocesamiento controlado vía `POST /v1/admin/dlq/:id/reproceso`. El microservicio `vidalstore-admin` valida que el identificador sea un UUID v4 válido (`ParseUUIDPipe`), consulta la base de datos y verifica idempotencia: si la columna `reprocesada` ya es `true`, aborta con `400 Bad Request`. Si está pendiente, publica el comando `dlq.reprocesar` en el exchange direct `vidalstore.comandos` (hacia la cola `q.reprocesar`) inyectando metadatos de trazabilidad (`x-reprocesado-por`, `x-reprocesado-en`, `x-mensaje-muerto-id`). El consumidor `ReprocesoDlqConsumidor` en `vidalstore-eventos` escucha `q.reprocesar`, reinyecta el evento al exchange original (`vidalstore.eventos` o `vidalstore.comandos`) con su `routing_key` y `x-evento-id` originales, y marca la fila como `reprocesada = true` en PostgreSQL.
 
 ```mermaid
 sequenceDiagram
@@ -1168,9 +1168,9 @@ sequenceDiagram
     actor Admin as Administrador
     participant Ctrl as AdminController (:3020)
     participant Svc as RabbitAdminService
-    participant Postgres as PostgreSQL (:5432)
+    participant Postgres as PostgreSQL (:5433->5432)
     participant Broker as RabbitMQ (:5672)
-    participant DLX as vidalstore.dlx
+    participant Worker as ReprocesoDlqConsumidor (:3010)
 
     Admin->>Ctrl: POST /v1/admin/dlq/77777777-7777-4777-a777-777777777777/reproceso
     Note over Ctrl: Valida token JWT y extrae adminSub
@@ -1187,12 +1187,12 @@ sequenceDiagram
         Ctrl-->>Admin: 400 Bad Request { message: 'El mensaje ya fue reprocesado previamente' }
     else Mensaje pendiente de reproceso
         Postgres-->>Svc: Fila con reprocesada = false, cola_origen = 'q.avisos', payload = '{...}'
-        Svc->>Broker: canal.publish('vidalstore.dlx', 'dlq.reprocesar', Buffer.from(payload), { persistent: true })
-        Broker->>DLX: Enruta mensaje remediado para reprocesamiento
-        Svc->>Postgres: UPDATE mensajes_muertos SET reprocesada = true, reprocesado_por = $1, reprocesada_en = now() WHERE id = $2
-        Postgres-->>Svc: UPDATE 1
+        Svc->>Broker: canal.publish('vidalstore.comandos', 'dlq.reprocesar', Buffer.from(comando), { persistent: true })
+        Svc->>Postgres: UPDATE mensajes_muertos SET reprocesada = true WHERE id = $1
         Svc-->>Ctrl: { id, cola_origen, reprocesada: true, republicado: true }
         Ctrl-->>Admin: 200 OK { mensaje: 'Mensaje muerto republicado exitosamente' }
+        Broker->>Worker: Entrega desde q.reprocesar a ReprocesoDlqConsumidor
+        Worker->>Broker: Republica payload en exchange original (vidalstore.eventos) con routing_key y x-evento-id originales
     end
 ```
 
@@ -1211,9 +1211,9 @@ El microservicio cuenta con cobertura unitaria total del flujo en `rabbit-admin.
 > **Responsable:** David · Repositorio `vidalstore-plataforma`.  
 > **Indicadores Cubiertos:** IE9 (Dos nodos RabbitMQ), IE10 (Clúster de 2 nodos con análisis de partición) e IE11 (Docker Compose con healthcheck condicionado).
 
-> ⚡ **Resumen Técnico y Quórum Raft:** La infraestructura de mensajería está orquestada con Docker Compose (`docker-compose.yml`) levantando dos nodos de RabbitMQ 4.3 (`rabbitmq1` en `:5672/:15672` y `rabbitmq2` en `:5673/:15673`). Ambos nodos comparten la misma cookie criptográfica (`RABBITMQ_ERLANG_COOKIE`) y utilizan descubrimiento estático de pares (`classic_config` en `rabbitmq/rabbitmq.conf`). Para garantizar un arranque sin carreras, `rabbitmq2` depende de `rabbitmq1` mediante `condition: service_healthy`, validado con `rabbitmq-diagnostics check_running`.
+> ⚡ **Resumen Técnico y Quórum Raft:** La infraestructura de mensajería está orquestada con Docker Compose (`docker-compose.yml`) levantando dos nodos de RabbitMQ 4.3 (`rabbitmq1` en `:5672/:15672` y `rabbitmq2` en `:5673/:15673`). Ambos nodos comparten la misma cookie criptográfica (`RABBITMQ_ERLANG_COOKIE`) y utilizan descubrimiento estático de pares (`classic_config` en `rabbitmq/cluster.conf`). Cumpliendo la directiva de L8 y EP2 §4.7, **entre `rabbitmq1` y `rabbitmq2` NO existe `depends_on`**, permitiendo que ambos nodos arranquen en paralelo, formen el clúster automáticamente y puedan volver a levantar después de un `stop` sin interbloqueos; cada uno cuenta con su propio healthcheck (`rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms`).
 > 
-> En RabbitMQ 4, los metadatos del clúster y las colas Quorum se gestionan mediante el algoritmo de consenso **Raft** (Khepri). Bajo Raft, la formación de quórum exige una mayoría estricta gobernada por la fórmula matemática:
+> En RabbitMQ 4.3, los metadatos del clúster (`rabbitmq_metadata`) y las 7 colas Quorum se gestionan mediante el algoritmo de consenso **Raft** (Khepri). Bajo Raft, la formación de quórum exige una mayoría estricta gobernada por la fórmula matemática:
 > $$\text{Mayoría Requerida} = \left\lfloor \frac{N}{2} \right\rfloor + 1$$
 > Para un clúster de $N=2$ nodos:
 > $$\left\lfloor \frac{2}{2} \right\rfloor + 1 = 1 + 1 = 2$$

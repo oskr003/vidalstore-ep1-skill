@@ -1,13 +1,13 @@
 ---
 name: vidalstore-ep1
 description: >-
-  Auditoría, verificación estricta y preparación técnica integral para DSY1107 - Desarrollo Cloud Native I (DUOC UC), cubriendo la Evaluación Parcial N°1 (EP1 - Caso VidalStore) y la Unidad 2 / EP2 (Mensajería Asíncrona, RabbitMQ, Docker Compose, DLQ y Persistencia Relacional con PostgreSQL).
-  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers, workers y bases de datos, asegurando el cumplimiento al 100% de la rúbrica oficial (IE1 a IE10 de EP1 e IE1 a IE19 de EP2), las precisiones de "EP1-aclaraciones.pdf", las clases magistrales D6 ("Git en serio"), D7 ("Docker de verdad y por qué una cola"), D8 ("Compose, ack, durabilidad y fallos") y D9 ("Diagnosticar sin adivinar y clúster RabbitMQ"), los laboratorios L4, L6, L6A, L7A, L7, LA9 ("Ack, DLQ e idempotencia"), L8 ("Clúster y microservicio administrador") y L8A (Clase pre-laboratorio con simulación de mayoría y políticas), y las resoluciones oficiales del profesor Umbingelelo en el foro y la pauta de EP2.
+  Auditoría, verificación estricta y preparación técnica integral para DSY1107 - Desarrollo Cloud Native I (DUOC UC), cubriendo el ciclo completo de la asignatura: Evaluación Parcial N°1 (EP1 - Caso VidalStore), Unidad 2 / EP2 (Mensajería Asíncrona con RabbitMQ, Docker Compose, DLQ y Persistencia Relacional con PostgreSQL) y Unidad 3 / EP3 (Streaming de Eventos con Apache Kafka en modo KRaft, Particiones, Offsets, Contratos con DTOs, Dead Letter Topics, Observabilidad con Prometheus/Grafana y Despliegue Multi-Nube).
+  Usar esta skill siempre que se requiera validar, desarrollar, corregir o auditar código de frontend, gateway, BFF, microservicios, brokers (RabbitMQ / Kafka KRaft), workers, bases de datos y despliegues en contenedores o nube, asegurando el cumplimiento al 100% de la rúbrica oficial (EP1, EP2 y EP3), las clases magistrales D6 a D12, los laboratorios L4 a L9, LA9 y A12, y las pautas y resoluciones del profesor Umbingelelo.
 ---
 
-# VidalStore EP1 y Unidad 2 — Skill de Aseguramiento de Calidad y Cumplimiento al 100%
+# VidalStore EP1, EP2 y EP3 (Unidades 1, 2 y 3) — Skill de Aseguramiento de Calidad y Cumplimiento al 100%
 
-Esta skill actúa como el estándar de control de calidad, auditoría técnica y preparación de defensa para la **Evaluación Parcial N°1 (Caso VidalStore)** y la **Unidad 2 / EP2 (Mensajería Asíncrona con RabbitMQ, Docker Compose y Persistencia)** de la asignatura **DSY1107 - Desarrollo Cloud Native I**.
+Esta skill actúa como el estándar de control de calidad, auditoría técnica y preparación de defensa para la **Evaluación Parcial N°1 (Caso VidalStore)**, la **Unidad 2 / EP2 (Mensajería Asíncrona con RabbitMQ, Docker Compose y Persistencia)** y la **Unidad 3 / EP3 (Streaming de Eventos con Apache Kafka KRaft, Particionado, Contratos y Nube)** de la asignatura **DSY1107 - Desarrollo Cloud Native I**.
 
 Integra las fuentes normativas obligatorias del encargo:
 1. **`EP1-aclaraciones.pdf`**: Documento oficial del profesor Cristian Calderón (`Umbingelelo`), el cual complementa el enunciado y rige sobre él.
@@ -28,16 +28,22 @@ Integra las fuentes normativas obligatorias del encargo:
 16. **`Guia_Conceptos_y_Codigo_VidalStore.pdf`**: Manual técnico integral de arquitectura distribuida para EP2, modelo Zero Trust de `vidalstore-admin`, catálogo de métricas y reproceso con `dlq.reprocesar`.
 17. **`L8A-L8-Cluster-y-microservicio-administrador-Clase-pre-laboratorio.html`**: Clase pre-laboratorio oficial de Semana 10 sobre clúster de dos nodos en Compose, cookie de Erlang, Quorum Queues basadas en Raft, la cuenta de la mayoría ($\lfloor N/2 \rfloor + 1$) y por qué 2 nodos toleran 0 caídas, el microservicio administrador (recorrido de petición, DTOs y `RabbitAdminService`), las seis métricas clave y decisiones operativas, y políticas de retención con desborde (`drop-head` vs `reject-publish`).
 18. **`L8.pdf`**: Guía oficial completa de 57 páginas del Laboratorio L8 ("Clúster y microservicio administrador") de Pulso con los 5 tramos (clúster en compose, quorum queues, `biblioteca-admin` en NestJS con DTOs y validación, métricas del broker y políticas de retención versionadas en `politicas.json`), las 4 cajas de Pulso, la Evaluación Formativa 2 (indicador del 17%), la tabla de 25+ errores frecuentes y el puente a la EP2.
+19. **`D11-Un-log-es-un-archivo-Kafka-contra-RabbitMQ.html`**: Clase magistral oficial de Semana 12 sobre Apache Kafka vs RabbitMQ (cola efímera vs commit log inmutable *append-only*), estructura de segmentos en disco (`.log`, `.index`, `.timeindex`), lectura mediante puntero/cursor (*offset*), rendimiento con *sequential disk I/O*, caché de páginas del kernel (*Page Cache*) y cero-copia (*Zero-Copy* con syscall `sendfile`), retención de datos por tiempo/tamaño a nivel de segmento y comportamiento de `auto.offset.reset` (`earliest` vs `latest`).
+20. **`D12-Contratos-entre-servicios-offsets-y-particiones.html`**: Clase magistral oficial de Semana 13 sobre contratos entre servicios y por qué los tipos TypeScript no bastan (desaparecen en runtime), validación estricta de eventos con `class-validator` y `class-transformer`, el sobre estándar de evento (`eventoId`, `tipo`, `version`, `emitidoEn`, `datos`), la regla de oro del commit manual de offsets (`offset + 1`) tras procesamiento exitoso, riesgos de auto-commit (at-most-once con pérdida silenciosa vs at-least-once con reprocesamiento idempotente en BD), rebalanceo de consumer groups (estrategias `range` y `round-robin`, pausa temporal del grupo) y monitoreo de la métrica reina *Consumer Lag*.
+21. **`P3-Presentacion-de-la-EP3-y-mapa-de-la-unidad-3.html`**: Presentación oficial de la Evaluación Parcial N°3 (EP3) y el mapa de las 7 regiones de la Unidad 3 (cola vs stream, el log, consumer groups, el clúster KRaft, retención y compactación, resiliencia/DLT, y observar y desplegar en nube), el ciclo de trabajo semanal con entregas estrictas cada viernes a las 23:59 (E1, E2, E3), y las reglas de higiene de Git continuo.
+22. **`L9A-L9-Kafka-local-para-la-E1-Clase-pre-laboratorio.html`**: Clase pre-laboratorio oficial de Semana 12 sobre Kafka en modo KRaft (3 controllers y 3 brokers en Docker Compose), quórum de votantes (`KAFKA_CONTROLLER_QUORUM_VOTERS`), listeners internos (`:19092`) y externos (`:9092`, `:9094`, `:9096`), `CLUSTER_ID` único, salud por socket TCP en bash (`</dev/tcp/localhost/9093`), y la creación determinista de topics con particiones y réplicas.
+23. **`L9.pdf`**: Guía oficial completa de 39 páginas del Laboratorio L9 ("Kafka local para la E1") con los 3 tramos (clúster KRaft de 6 nodos y `kafka-ui`, script `kafka/topics.sh` con retenciones de 7 días y 1 día, y topics compactados para grupos de 3; productor en NestJS con cliente oficial `@platformatic/kafka@2.14.0` y prohibición de `kafkajs`; simulación de carga y respuestas oficiales de Pulso "Voy bien").
+24. **`lab A12.pdf`**: Guía oficial del Laboratorio de Actividad A12 ("Un log con offsets y particiones, a mano") con los cuatro programas en Node.js puro sin dependencias (`cola-vs-log.mjs`, `retencion.mjs`, `particiones.mjs`, `consumer-groups.mjs`) que demuestran experimentalmente por qué leer no borra, cómo opera la retención por segmentos, cómo la clave determina la partición (`hash(key) % N`) y cómo se distribuyen las particiones entre consumidores del mismo grupo.
 
 > [!NOTE]
 > **Estado de las Evaluaciones:**
-> * **EP1 (Cadena Sincrónica de 4 Capas)**: **ENTREGADA Y CERRADA**. Los requisitos de código, commits y proxies quedaron congelados y aprobados.
-> * **EP2 (Mensajería Asíncrona, RabbitMQ, Docker y Microservicios)**: **FASE ACTIVA (Semanas 8 a 10)**.
->   * Ponderación: 40% Encargo Grupal (IE1 a IE8) + 60% Presentación Individual (IE9 a IE19).
->   * **Distribución Oficial del Grupo (repositorios.md y ep2-plan-v2.pdf)**:
->     * **David**: Dueño de `vidalstore-plataforma` (IE2, IE9, IE10, IE11, IE14, IE19; clúster RabbitMQ 2 nodos, Postgres 18, topología centralizada y políticas) y `vidalstore-gateway` (perímetro de seguridad, validación JWT y scopes).
->     * **Iván**: Dueño de `vidalstore-eventos` (IE3, IE4, IE5, IE12, IE13, IE15, IE16; consumidores `Avisos`, `Auditoria`, `Correos`, `DLQ`, TypeORM e idempotencia) y `vidalstore-frontend` (SPA Angular, login Cognito Hosted UI con Amplify).
->     * **Oscar**: Dueño de `vidalstore-admin` (IE6, IE7, IE8, IE17, IE18; observabilidad de clúster, CRUD de topología, gestión de DLQ y reprocesamiento) y `vidalstore-backend` (BFF agregador, microservicios de dominio y productor AMQP de licencias con persistencia relacional PostgreSQL 18 según Regla L6A para IE15).
+> * **EP1 (Cadena Sincrónica de 4 Capas)**: **ENTREGADA Y CERRADA**.
+> * **EP2 (Mensajería Asíncrona con RabbitMQ, Docker y Microservicios)**: **ENTREGADA Y OPERATIVA**. Ecosistema de 10 contenedores levantado y validado al 100% con `service_healthy`.
+> * **EP3 (Streaming con Apache Kafka KRaft, Particionado, Nube y CI/CD)**: **FASE ACTIVA (Semanas 12 a 16)**.
+>   * **E1 (Viernes 6 de noviembre, 23:59)**: Clúster KRaft con 3 controllers y 3 brokers en Compose; topics creados desde `kafka/topics.sh`; productor de compras; simulador publicando; 1 consumidor; `.gitattributes` en todos los repos; cuentas en AWS y Azure; diagrama `docs/red.md`.
+>   * **E2 (Viernes 13 de noviembre, 23:59)**: Tres consumer groups independientes; commit manual de offsets (`offset + 1`); retención justificada; panel en vivo (Prometheus, Grafana y carga); imágenes en GHCR; infraestructura AWS con capa de datos. *(Verificación en vivo en L12)*.
+>   * **E3 (Viernes 20 de noviembre, 23:59)**: Resiliencia con Dead Letter Topics (`.dlt`); microservicio administrador de Kafka completo; servicios y gateways en dos nubes; pipeline de despliegue continuo (CI/CD).
+>   * **Defensas Individuales (Semana 16, 23 al 27 de noviembre)**: Demostración técnica individual, operación en vivo en la nube e inspección del árbol de commits.
 
 ---
 
@@ -242,6 +248,47 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
     - **Matices de RabbitMQ 4**: (1) En Quorum Queues, `reject-publish` admite **+1 mensaje** sobre `max-length` antes de rechazar (con `max-length: 3` entran 4 y el 5° se rechaza); (2) `reject-publish-dlx` **no funciona en colas quorum** (se comporta como `drop-head` sin avisar); (3) `message-ttl` se asigna al **entrar** a la cola y **no borra mensajes viejos** que ya estaban antes de aplicar la política.
 38. **Prueba en Limpio del 17% (Evaluación Formativa 2, IE11)**:
     - Demostración desde un clon limpio: crear `.env` desde `.env.example`, `docker compose down -v`, `docker compose up -d --wait`, `cluster_status` con ambos nodos en `Running Nodes`, `import_definitions` de las políticas y verificación de `data/catalogo.json` con su `seed.ts`.
+39. **Clúster Apache Kafka en Modo KRaft (L9, L9A, P3)**:
+    - **Modo KRaft sin ZooKeeper**: Despliegue de 6 nodos dedicados (3 controllers de quórum y 3 brokers de almacenamiento).
+    - **Separación estricta de roles**:
+      - `KAFKA_PROCESS_ROLES: controller` en `controller-1` a `controller-3` (quórum Raft de metadatos en puerto 9093; no reciben tráfico de clientes).
+      - `KAFKA_PROCESS_ROLES: broker` en `broker-1` a `broker-3` (almacenan segmentos `.log` y atienden a productores/consumidores en puertos `19092` interno y `9092`, `9094`, `9096` externos).
+    - **Identificador de Clúster Único**: `CLUSTER_ID: VmlkYWxTdG9yZS1LYWZrYQ` para VidalStore.
+    - **Quórum de Votantes**: `KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093`.
+    - **Memoria Controlada**: `KAFKA_HEAP_OPTS: "-Xmx256m -Xms256m"` en los 6 contenedores para evitar colapso de RAM en el host.
+    - **Healthcheck TCP Nativo**: `test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9093'"]` para controllers y en puerto 19092 para brokers.
+40. **Cliente Obligatorio de Node.js y Prohibición de Librerías Nativas (L9 Página 13)**:
+    - **Estándar Oficial Obligatorio**:
+      ```bash
+      npm install --save-exact @platformatic/kafka@2.14.0
+      ```
+    - **Prohibición Terminante**: Queda **estrictamente prohibido** el uso de `kafkajs` (descontinuado) y `@confluentinc/kafka-javascript` (binarios C++ no portables entre arquitecturas). La pauta oficial penaliza la presencia de estas librerías en `package.json`.
+41. **Catálogo Oficial de Topics de VidalStore y Script `topics.sh` (L9, P3)**:
+    - Creación determinista e idempotente mediante `kafka/topics.sh` con `kafka-topics.sh --create --if-not-exists`:
+      - **`vidalstore.compras`**: 3 particiones, 3 réplicas, `retention.ms=604800000` (7 días). Eventos inmutables emitidos por el microservicio de persistencia tras guardar en PostgreSQL.
+      - **`vidalstore.actividad`**: 3 particiones, 3 réplicas, `retention.ms=86400000` (1 día). Telemetría y navegación emitida por Gateway/BFF.
+      - **`vidalstore.compras.dlt`** y **`vidalstore.actividad.dlt`**: Dead Letter Topics para aislamiento de cartas venenosas.
+      - **`vidalstore.catalogo` (Requisito Grupos de 3)**: 3 particiones, 3 réplicas, con política de compactación (`cleanup.policy=compact`, `min.cleanable.dirty.ratio=0.1`). Conserva el último estado de cada `juegoId` indefinidamente.
+42. **Contratos en Runtime con DTOs y Sobre Estándar (D12, L9)**:
+    - Los tipos de TypeScript desaparecen tras la compilación (*type erasure*). Todo evento entrante y saliente debe validarse en tiempo de ejecución mediante `class-validator` y `class-transformer`.
+    - **Sobre Estándar Obligatorio**: Todo mensaje en Kafka debe estructurarse con:
+      `{ eventoId: UUID, tipo: string, version: string, emitidoEn: ISO8601, usuarioSub: string, datos: object }`.
+43. **Regla de Oro del Commit Manual de Offsets (`offset + 1`) (D12, Lab A12)**:
+    - **Auto-commit apagado**: `{ enableAutoCommit: false }` obligatorio en consumidores de negocio.
+    - **Fórmula `offset + 1`**: En Kafka, el commit confirma el offset del **siguiente** mensaje a recibir. Confirmar `message.offset` sin el `+ 1` causaría reprocesamiento inmediato del mismo mensaje.
+    - **Orden de Operación**: 1. Validar contrato $\rightarrow$ 2. Persistir en BD $\rightarrow$ 3. `consumer.commitOffsets([{ topic, partition, offset: (Number(msg.offset) + 1).toString() }])`.
+44. **Particionado por Clave y Orden Monotónico (D11, D12, Lab A12)**:
+    - En Kafka el orden total solo existe **dentro de cada partición**.
+    - El productor debe especificar `usuarioSub` o `juegoId` como `record key`. La función de hash de Kafka asigna siempre la misma partición a los eventos de una misma entidad, garantizando consistencia temporal.
+45. **Higiene EOL y `.gitattributes` en la EP3 (L9 Página 5 y 11, P3)**:
+    - Cada repositorio del ecosistema debe incluir un archivo `.gitattributes` en su raíz con:
+      ```gitattributes
+      * text=auto eol=lf
+      *.sh text eol=lf
+      *.mjs text eol=lf
+      *.jsonl text eol=lf
+      ```
+    - Esto previene errores `\r: command not found` en contenedores Linux causados por retornos de carro de Windows.
 
 ---
 
@@ -446,7 +493,7 @@ Comprobar los 5 hitos fundamentales de la Semana 9:
 7. **Políticas de Retención en Repositorio (IE19)**: `rabbitmq/politicas.json` versionado con 3 políticas (`retencion-avisos`, `retencion-trabajo`, `retencion-dlq`) con desbordes `drop-head` y `reject-publish`, montado en `/etc/rabbitmq/politicas.json:ro` e importado idempotentemente con `scripts/rabbitmq-policies.sh`.
 
 ### Paso 12: Suite de Motores de Auditoría Automatizados y Pruebas Unitarias del Ecosistema
-La skill cuenta con 4 motores de auditoría estricta ejecutables desde la raíz del proyecto:
+La skill cuenta con 5 motores de auditoría estricta ejecutables desde la raíz del proyecto:
 1. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_ep1.py`**:
    - Audita los 146 commits del historial, tokens en `sessionStorage`, lista blanca del frontend, validación JWKS en API Gateway (:8080) e idempotencia en compras.
 2. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_l6.py`**:
@@ -455,9 +502,13 @@ La skill cuenta con 4 motores de auditoría estricta ejecutables desde la raíz 
    - Valida healthchecks encadenados, topología DLX y las 3 DLQs, control de flujo con `prefetch(1)`, captura de SQLSTATE `23505` con `ack()` defensivo para idempotencia, y descarte de veneno con `nack(false, false)`.
 4. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_l8.py`**:
    - Valida clúster RabbitMQ de 2 nodos con autodescubrimiento `cluster.conf`, ausencia de `depends_on` circular en `rabbitmq2`, Quorum Queues, microservicio administrador con canal protegido y traducción semántica, y políticas de retención versionadas en `politicas.json`.
-5. **Batería de Pruebas Unitarias (209 / 209 Aprobadas - 100%)**:
+5. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_ep3.py`**:
+   - Valida los requisitos de la Unidad 3 / EP3: presencia de `.gitattributes` en los 8 repositorios con `eol=lf`, cliente obligatorio `@platformatic/kafka@2.14.0` (prohibiendo `kafkajs` y `@confluentinc/kafka-javascript`), configuración del clúster KRaft de 6 nodos en Compose (`CLUSTER_ID: VmlkYWxTdG9yZS1LYWZrYQ`) y script de topics `kafka/topics.sh`.
+6. **Batería de Pruebas Unitarias del Ecosistema**:
    - `vidalstore-admin`: `npm test` (89 tests Vitest)
-   - `vidalstore-backend`: `npm test` (72 tests Jest)
+   - `vidalstore-catalogo`: `npm test` (75 tests Vitest)
+   - `vidalstore-licencias`: `npm test` (pruebas de dominio)
+   - `vidalstore-bff`: `npm test` (pruebas de agregación)
    - `vidalstore-eventos`: `npm test` (22 tests Vitest)
    - `vidalstore-gateway`: `npm test` (19 tests Jest)
    - `vidalstore-frontend`: `npm run test -- --watch=false` (6 tests Karma)
@@ -468,6 +519,10 @@ La skill cuenta con 4 motores de auditoría estricta ejecutables desde la raíz 
 ## 5. Guías de Referencia Detalladas
 
 Para profundizar en áreas específicas del encargo, consultar los siguientes documentos de referencia adjuntos:
+- [Guía Técnica de Clúster Kafka KRaft, Docker Compose y Topología Local (L9 y L9A)](./references/cluster_kraft_docker_l9_l9a.md): Arquitectura KRaft sin ZooKeeper de 6 contenedores (3 controllers dedicados + 3 brokers dedicados), quórum Raft de votantes, listeners interno (`19092`) y externo (`9092`, `9094`, `9096`), `CLUSTER_ID: VmlkYWxTdG9yZS1LYWZrYQ`, healthchecks TCP en bash, `kafka-ui`, script `kafka/topics.sh` e higiene contra errores CRLF.
+- [Guía Técnica de Log Inmutable, Offsets y Particiones (D11 y Lab A12)](./references/log_offsets_y_particiones_d11_a12.md): RabbitMQ vs Apache Kafka (cola de trabajo efímera vs commit log inmutable), estructura de segmentos en disco (`.log`, `.index`, `.timeindex`), *Zero-Copy* con syscall `sendfile()`, políticas de retención por tiempo y tamaño a nivel de segmento, semántica de `auto.offset.reset` (`earliest` vs `latest`), orden monotónico por partición vía hashing de clave y los 4 modelos experimentales de Lab A12.
+- [Guía Técnica de Contratos de Eventos, DTOs y Commit Manual (D12)](./references/contratos_dto_y_commit_manual_d12.md): Contratos formales y por qué los tipos TypeScript se borran en runtime, validación estricta con `class-validator` y `class-transformer`, el sobre estándar de evento en Kafka, la regla de oro del commit manual de offsets (`offset + 1`) con auto-commit apagado, riesgos de at-most-once vs at-least-once, rebalanceo de consumer groups (`range` vs `round-robin`) y monitoreo de la métrica reina *Consumer Lag*.
+- [Guía Normativa de Mapa de Unidad 3, Cronograma EP3 y Reglas VidalStore (P3 y L9)](./references/ep3_mapa_unidad_3_y_vidalstore.md): Mapa conceptual de las 7 regiones de streaming, cronograma semanal de hitos (E1, E2, E3 y Defensas), catálogo oficial de topics de VidalStore (compras a 7 días, actividad a 1 día, DLTs y catálogo compactado), cliente obligatorio `@platformatic/kafka@2.14.0`, reglas de higiene `.gitattributes` y banco oficial de preguntas de defensa de la EP3.
 - [Guía Técnica de Clúster RabbitMQ, Quorum Queues y Microservicio Administrador (L8 y L8A)](./references/cluster_y_microservicio_administrador_l8_l8a.md): Clúster de 2 nodos en Compose, `cluster.conf`, Quorum Queues con Raft, regla de la mayoría $\lfloor N/2 \rfloor + 1$, microservicio administrador con arquitectura de 2 protocolos, DTOs y validación estricta, las 6 métricas clave de observabilidad, políticas de retención con `drop-head` y `reject-publish`, y tabla de 25+ errores frecuentes.
 - [Guía Técnica de Diagnóstico, Idempotencia, Clúster RabbitMQ y Políticas (D9 y LA9)](./references/diagnostico_cluster_idempotencia_d9_la9.md): Método de diagnóstico en 4 pasos, lectura de stack traces (`src/`), Quorum Queues con Raft, regla de mayoría de 2 nodos, políticas de retención (`drop-head` vs `reject-publish`), y las 3 capas de error de Compose.
 - [Guía Técnica de Compose, DLQ y Persistencia (D8, L7A y L7)](./references/mensajeria_compose_dlq_persistencia_l7.md): Orquestación multi-contenedor, durabilidades, prefetch(1), topología con DLX/DLQ, idempotencia con UNIQUE, TypeORM, CartasMuertasConsumidor y mapeo Biblioteca vs VidalStore.
