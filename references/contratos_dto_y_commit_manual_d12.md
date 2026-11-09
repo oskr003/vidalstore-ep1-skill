@@ -49,7 +49,8 @@ export class DatosCompraRealizadaDto {
 }
 
 /**
- * Sobre Estándar Obligatorio para Todo Evento en Kafka
+ * Sobre Estándar Obligatorio para Todo Evento en Kafka (Guía §7 y Retroalimentación E1)
+ * Obligatorio exponer juegoId en el primer nivel del sobre, además de datos.
  */
 export class SobreEventoDto {
   @IsUUID(4)
@@ -59,10 +60,14 @@ export class SobreEventoDto {
   tipo!: TipoEventoVidalStore;
 
   @IsString()
-  version!: string; // ej: '1.0'
+  version!: string; // ej: '1.0' o 1
 
   @IsISO8601()
   emitidoEn!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  juegoId!: string; // Clave de entidad expuesta en primer nivel para ruteo/filtrado
 
   @IsString()
   @IsNotEmpty()

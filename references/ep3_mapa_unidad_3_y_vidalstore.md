@@ -97,3 +97,34 @@ grep -c $'\r' start-all.sh kafka/topics.sh
    - *Respuesta*: El productor utiliza `usuarioSub` como `record key`. La función de hash de Kafka asigna siempre la misma partición a los eventos de un mismo usuario, y dentro de esa partición el orden es total e inmutable gracias a la secuencia monotónica de offsets.
 4. **Si el consumidor falla tras persistir en base de datos pero antes de confirmar el offset a Kafka, ¿cómo se previene la duplicación?**
    - *Respuesta*: Kafka garantiza entrega *at-least-once*. Al reiniciar, el consumidor reprocesará el mensaje duplicado. La base de datos receptora aplica idempotencia estricta mediante una restricción `UNIQUE` en la columna de identidad del evento (código de error SQL `23505`), evitando compras o auditorías duplicadas.
+
+---
+
+## 7. Lecciones Aprendidas y Criterios Críticos de Calificación (Entrega 1 hacia E2 y E3)
+
+A partir de la corrección oficial de la Entrega 1 (E1) por parte del docente, se establecen como obligatorios los siguientes puntos para evitar pérdidas de puntaje en E2 y E3:
+
+1. **Variables de Entorno Estrictas sin Fallbacks Hardcodeados (IE1)**:
+   - Prohibido dejar cadenas con direcciones de brokers en el código (ej. `process.env.KAFKA_BROKERS || 'broker-1:19092...'`).
+   - Leer siempre con `configService.getOrThrow<string>('KAFKA_BROKERS')`.
+   - Garantizar que `.env.example` en todos los repos incluya la variable documentada.
+2. **Shutdown Hooks Obligatorios en Consumidores NestJS (IE2)**:
+   - Todo servicio NestJS que consuma Kafka o RabbitMQ debe ejecutar `app.enableShutdownHooks()` en su `main.ts` antes de `app.listen()`.
+   - Sin esto, `onModuleDestroy()` no se dispara al recibir `SIGTERM`, el consumidor no avisa su salida a Kafka y el broker bloquea el rebalanceo de particiones hasta que expira el session timeout.
+3. **Sobre de Evento Kafka de Primer Nivel (IE4)**:
+   - Todo mensaje debe incluir `juegoId` directamente en la raíz: `{ eventoId, tipo, version, emitidoEn, juegoId, usuarioSub, datos }`.
+   - Validar `tipo` con `@IsIn` para prevenir eventos con nombres arbitrarios.
+   - Encabezado `x-correlation-id` debe ser un UUID propio del flujo y no un clon de `x-evento-id`.
+4. **Script de Arranque `levantar.sh` sin Comandos Destructivos para el Docente (Compila)**:
+   - Mantener el script en `main` exactamente en la ruta prometida en el `README.md`.
+   - Cero comandos `kill -9` o `kill -15` escaneando puertos del host y cero `docker rm -f` de contenedores ajenos. La limpieza debe circunscribirse al compose (`docker compose down`).
+   - El script debe resolver su directorio dinámicamente para ejecutarse tanto desde la raíz del proyecto como desde `vidalstore-plataforma`.
+5. **Higiene de Pull Requests y Prohibición de Automerge (Git)**:
+   - Todo avance debe entrar por PR con ramas `feature/*`.
+   - Los PRs deben ser revisados y aprobados por **otro compañero** de equipo. El automerge (abrir y mergear uno mismo) invalida la revisión.
+   - Si un integrante no registra PRs propios durante el ciclo, todo el grupo es penalizado con una bajada de nivel en Git (de 60% a 30%).
+6. **Verificaciones Multi-Cloud para E2 y E3 (Nubes)**:
+   - En Azure: incluir la salida de `az vm list-skus` en `region.txt` para validar la existencia y cuota de `Standard_B2ats_v2` y `Standard_B2als_v2`.
+   - En AWS: asegurar que los scripts de prueba no dependan de dry-run casero y validar el rol asignado.
+   - En `docs/red.md`: eliminar cualquier placeholder `<...>` residual del template de red.
+

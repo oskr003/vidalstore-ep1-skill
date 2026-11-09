@@ -289,6 +289,32 @@ Cualquier cambio de código o revisión en los repositorios DEBE cumplir estrict
       *.jsonl text eol=lf
       ```
     - Esto previene errores `\r: command not found` en contenedores Linux causados por retornos de carro de Windows.
+46. **Prohibición de Respaldo Hardcodeado de Brokers Kafka y Lectura Obligatoria con `.getOrThrow` (IE1 · Lección de Retroalimentación E1)**:
+    - **Cero strings de respaldo en código**: Queda estrictamente prohibido colocar cadenas fallback de brokers como `process.env.KAFKA_BROKERS || 'broker-1:19092,...'`. Si alguien arranca el microservicio fuera de Docker Compose sin variables de entorno, el cliente intentaría conectarse a brokers inexistentes sin alertar del fallo de configuración.
+    - **Fallo Rápido y Ruidoso**: Obligatorio leer mediante `configService.getOrThrow<string>('KAFKA_BROKERS')` o lanzar excepción explícita inmediata al arrancar si la variable no existe.
+    - **Sincronización de `.env.example`**: Todo repositorio que consuma o publique en Kafka (`vidalstore-licencias`, `vidalstore-eventos`, etc.) debe documentar explícitamente `KAFKA_BROKERS` en su archivo `.env.example`.
+47. **Shutdown Hooks Obligatorios en Clientes y Consumidores NestJS (`app.enableShutdownHooks()`) (IE2 · Lección de Retroalimentación E1)**:
+    - **El ciclo de vida en Docker**: Aunque un servicio implemente la interfaz `OnModuleDestroy` con `await this.consumer.close()`, NestJS **no intercepta las señales del sistema operativo (`SIGTERM`/`SIGINT`) por omisión**.
+    - **Línea Innegociable en `main.ts`**: Es obligatorio invocar `app.enableShutdownHooks()` inmediatamente antes de `await app.listen(...)` en todo microservicio o worker con conexiones a Kafka o RabbitMQ.
+    - **Impacto Operativo**: Sin esta llamada, al detener el contenedor (`docker stop` o reinicio), el cliente Kafka muere abruptamente sin emitir el `LeaveGroupRequest` al broker. El broker asume que el consumidor sigue vivo hasta que expira el `session.timeout.ms`, bloqueando el rebalanceo de particiones y retrasando innecesariamente el arranque del nuevo contenedor.
+48. **Sobre Estándar de Kafka de Primer Nivel (`juegoId` y Claves en Raíz) y DTOs Tipados con `@IsIn` (IE4 · Lección de Retroalimentación E1)**:
+    - **Contrato Estándar Completo de Primer Nivel (Guía §7 y D12)**: Todo evento de dominio en Kafka debe exponer en la raíz del objeto JSON:
+      `{ eventoId: UUID, tipo: string, version: number, emitidoEn: ISO8601, juegoId: string, usuarioSub: string, datos: object }`.
+    - **El error de anidamiento**: Dejar `juegoId` únicamente dentro del objeto `datos` incumple el sobre estándar: los consumidores del streaming procesan cabeceras y propiedades raíz para ruteo, indexación y filtrado rápido sin deserializar payloads anidados.
+    - **Validación Estricta de Tipos de Evento**: El campo `tipo` en los DTOs de eventos (`class-validator`) debe restringirse estrictamente a valores conocidos mediante `@IsIn(VALORES_PERMITIDOS)`.
+    - **Correlation ID Independiente**: El encabezado `x-correlation-id` debe transportar una correlación auténtica (UUID autogenerado o propagado desde la cabecera HTTP de la petición entrante), y no un clon idéntico del `x-evento-id`.
+49. **Comando Único de Despliegue en `main`, Ubicación Coherente de `levantar.sh` y Cero Comandos Destructivos Host (Compila · Lección de Retroalimentación E1)**:
+    - **Entrega desde `main` sin Rescate**: Todo archivo de arranque documentado en el `README.md` (ej. `bash scripts/levantar.sh` o `bash levantar.sh`) debe estar commiteado y mergeado en la rama `main` del repositorio oficial. Cualquier archivo ausente que obligue al evaluador a extraer scripts desde un ZIP externo es considerado un **rescate** y descuenta automáticamente 0.5 puntos en la nota final.
+    - **Resolución Agnóstica de Rutas**: Los scripts deben autocalcular su directorio base de manera robusta (`DIR_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`) para funcionar idénticamente si son invocados desde la raíz del grupo o desde dentro de `vidalstore-plataforma`.
+    - **Prohibición de Comandos Host Destructivos**: Queda terminantemente prohibido incluir bucles agresivos con `kill -15` o `kill -9` escaneando puertos locales de la máquina anfitriona (18 puertos) o llamadas masivas a `docker rm -f vidalstore-*`. En el equipo del evaluador, esto apaga procesos de desarrollo ajenos al curso. La liberación de recursos debe acotarse exclusivamente al ecosistema del proyecto mediante `docker compose down`.
+50. **Higiene de Pull Requests: Revisión Cruzada Obligatoria y Castigo Grupal por Omisión de PRs (Git · Lección de Retroalimentación E1)**:
+    - **Prohibición Terminante de Automerge**: Los Pull Requests deben ser revisados, aprobados y mergeados obligatoriamente por **otro integrante** del grupo. Un PR abierto y mergeado por el mismo autor no cuenta como revisado y no genera evidencia de colaboración técnica.
+    - **Prohibición de Merges Locales Monolíticos a `main` o `dev`**: Todo avance (clúster, scripts, microservicios, documentación) debe ingresar a través de ramas `feature/*` con Pull Request. Prohibido realizar merges directos desde la máquina local hacia ramas de integración.
+    - **Regla de Penalización Grupal (Guía §4)**: Si un solo integrante del equipo no registra Pull Requests propios en el período evaluado, la calificación del criterio Git desciende **un nivel completo para todos los integrantes** del grupo (ej. caída de 60% a 30%), independientemente del volumen de código que haya aportado en commits.
+51. **Evidencias de Nubes Multi-Cloud, Verificación de SKUs y Calidad de Entregables para E2 y E3 (Nubes y Documentación)**:
+    - **Azure SKUs Disponibles**: En `vidalstore-plataforma/deploy/azure/region.txt` es obligatorio incluir la salida de `az vm list-skus` que certifique que los tamaños `Standard_B2ats_v2` y `Standard_B2als_v2` existen y tienen cuota en la región seleccionada.
+    - **Higiene de Diagramas y Red**: El documento `docs/red.md` debe estar limpio de marcadores de posición tipo `<etiqueta>` o `<subred>` y debe coincidir exactamente con los SKUs y topología definidos.
+    - **Datos Completos en Informe PDF**: El PDF de entrega debe contener explícitamente: sección (001D), grupo (Grupo 5), integrantes, enlaces limpios a los 8 repositorios, asignación de nubes por integrante y el comando de arranque textual.
 
 ---
 
@@ -503,7 +529,7 @@ La skill cuenta con 5 motores de auditoría estricta ejecutables desde la raíz 
 4. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_l8.py`**:
    - Valida clúster RabbitMQ de 2 nodos con autodescubrimiento `cluster.conf`, ausencia de `depends_on` circular en `rabbitmq2`, Quorum Queues, microservicio administrador con canal protegido y traducción semántica, y políticas de retención versionadas en `politicas.json`.
 5. **`python3 .agents/skills/vidalstore-ep1/scripts/audit_ep3.py`**:
-   - Valida los requisitos de la Unidad 3 / EP3: presencia de `.gitattributes` en los 8 repositorios con `eol=lf`, cliente obligatorio `@platformatic/kafka@2.14.0` (prohibiendo `kafkajs` y `@confluentinc/kafka-javascript`), configuración del clúster KRaft de 6 nodos en Compose (`CLUSTER_ID: VmlkYWxTdG9yZS1LYWZrYQ`) y script de topics `kafka/topics.sh`.
+   - Valida los requisitos de la Unidad 3 / EP3: presencia de `.gitattributes` en los 8 repositorios con `eol=lf`, cliente obligatorio `@platformatic/kafka@2.14.0` (prohibiendo `kafkajs` y `@confluentinc/kafka-javascript`), configuración del clúster KRaft de 6 nodos en Compose (`CLUSTER_ID`), script de topics `kafka/topics.sh`, validación de shutdown hooks en consumidores NestJS, ausencia de brokers fallback hardcodeados en productores, sobre DTO con `juegoId` en primer nivel, y sanidad de scripts `levantar.sh` sin `kill` destructivos.
 6. **Batería de Pruebas Unitarias del Ecosistema**:
    - `vidalstore-admin`: `npm test` (89 tests Vitest)
    - `vidalstore-catalogo`: `npm test` (75 tests Vitest)
