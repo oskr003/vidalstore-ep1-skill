@@ -551,9 +551,9 @@ El Laboratorio L8 y su clase pre-laboratorio L8A cierran la Unidad 2 cubriendo e
 
 ---
 
-## 16. Suite de Auditoría Automatizada (audit_ep1.py, audit_l6.py, audit_l7.py, audit_l8.py)
+## 16. Suite de Auditoría Automatizada (audit_ep1.py, audit_l6.py, audit_l7.py, audit_l8.py, audit_ep3.py)
 
-Para verificar el cumplimiento del 100% de la rúbrica y las reglas de las clases D6 a D9 y L6 a L8A, la skill provee 4 scripts de auditoría automática en `scripts/`:
+Para verificar el cumplimiento del 100% de la rúbrica y las reglas de las clases D6 a D13 y L6 a L10, la skill provee 5 scripts de auditoría automática en `scripts/`:
 
 ```bash
 # 1. Auditoría de Cadena Sincrónica EP1 (146 commits, 4 capas, JWKS, sessionStorage, higiene)
@@ -567,6 +567,9 @@ python3 .agents/skills/vidalstore-ep1/scripts/audit_l7.py
 
 # 4. Auditoría L8 / L8A: Clúster 2 nodos (cluster.conf), sin bloqueo circular, Quorum Queues y Admin
 python3 .agents/skills/vidalstore-ep1/scripts/audit_l8.py
+
+# 5. Auditoría EP3 (E1 y E2 / L9, D13, A13, L10): KRaft, @platformatic/kafka@2.14.0, Consumer Groups, Panel, GHCR y Nubes
+python3 .agents/skills/vidalstore-ep1/scripts/audit_ep3.py
 ```
 
 ### Resultados de la Batería Completa de Tests (209 Tests Aprobados · 100%)
@@ -577,5 +580,29 @@ python3 .agents/skills/vidalstore-ep1/scripts/audit_l8.py
 - `vidalstore-frontend`: 6 tests (Angular / Karma)
 - `vidalstore-plataforma`: 1 test (Docker Compose YAML)
 - **Total acumulado**: **209 / 209 pruebas aprobadas al 100%**.
+
+---
+
+## 17. Unidad 3 · Semana 13: Escalamiento, Replicación, Consumer Lag y Taller de la E2 (D13, Lab A13 y L10)
+
+Consolida los estándares normativos de **D13**, **Actividad A13 (`LABA13.pdf`)** y **Laboratorio L10 (`L10.pdf` · 111 páginas)**:
+
+1. **Consumer Lag, Tendencia, Throughput, Percentiles y Replicación (D13 y Lab A13)**:
+   - **Hashing `murmur2`**: En `vidalstore.actividad` (`3.039` eventos, key `juegoId`), el juego `292030` cae en `P0` concentrando **`1.751` eventos (`57,6%`)** (*hot partition*). En `biblioteca.lecturas` (`2.984` eventos), `"18"` cae en `P1` (`76,4%`).
+   - **Tendencia del Lag (`a13/lag.mjs`)**: $\text{LAG} = \text{LOG-END-OFFSET} - \text{CURRENT-OFFSET}$. La pendiente ($\Delta \text{lag} / \Delta t = \text{entrada} - \text{procesamiento}$) decide si hay emergencia (`SUBE`) o recuperación autónoma (`BAJA`). Si `LAG = 0` por largo tiempo, verificar que `LOG-END-OFFSET` siga subiendo para descartar productor caído.
+   - **Throughput, Latencia y Percentiles (`a13/throughput.mjs`)**: Escalar consumidores multiplica el throughput del grupo pero no baja la latencia individual de Postgres; reduce el tiempo de espera en la partición. Se mide con `performance.now()` en un bucle secuencial `for...of` + `await` (jamás `Promise.all`), reportando `p50` y `p99`.
+   - **Reparto de Particiones y Ociosos (`a13/reparto.mjs`)**: Trabajan $\min(\text{consumidores}, \text{particiones})$; los demás quedan con `#PARTITIONS = 0` (*idle*). Con 4 instancias de `eventos`, `vidalstore-alertas` y `vidalstore-historial` (3 particiones) muestran `1, 1, 1 y 0`, mientras `vidalstore-panel` (2 topics = 6 particiones) muestra `2, 2, 1 y 1`.
+   - **Replicación (`replication.factor=3`, `min.insync.replicas=2`, `acks=all`)**: Con 1 broker caído (`ISR = 2/3`), acepta escrituras sin error. Con 2 brokers caídos (`ISR = 1/3`), rechaza con **`NOT_ENOUGH_REPLICAS`**.
+2. **Taller de la Entrega 2 — Consumer Groups, Panel en Vivo, GHCR, AWS y Azure (L10)**:
+   - **Separación Estricta en `eventos/src/streaming/` (`IE5`)**: Cada grupo separa `<grupo>.consumidor.ts` (`ConsumidorKafka<T>` + `Contrato<T>`) de `<grupo>.negocio.ts` (**cero imports de Kafka**). Commit manual después de escribir y reintento cada 2 s si cae Postgres.
+   - **Las 3 Formas de Idempotencia y CTE en TypeORM**: (1) `kpi_minuto` por `evento_id`; (2) `eventos_procesados (grupo, evento_id)` en transacción con contadores; (3) `catalogo` con guarda `WHERE emitido_en < EXCLUDED.emitido_en`. Todo `UPDATE ... RETURNING` en TypeORM se envuelve en `WITH devuelto AS (UPDATE ... RETURNING ...) SELECT ... FROM devuelto`.
+   - **Cifras Oficiales de VidalStore**: **`362` partidas en curso al cierre (`22:00`)**, **máx `480` a las `21:46`**, **`380` compras por `6.291.370 CLP`**, **`15` revocaciones**, **`6.032.190 CLP` netos**, y **1 alerta del juego `1328670` de `21:30` a `21:35` UTC (`68/69`)**.
+   - **Panel en Vivo (`/panel` $\to$ `/v1/panel/en-vivo` $\to$ `/panel/en-vivo`)**: Angular consulta cada 5 s con `switchMap` + `takeUntilDestroyed`; Gateway valida JWT/scope; BFF exige `@Roles('administradores')` y consulta a `eventos` por HTTP (**el BFF jamás toca Postgres**); `eventos` ejecuta 3 consultas en paralelo con `Promise.all`.
+   - **Imágenes Multi-Stage y GHCR**: 7 servicios con `Dockerfile` sobre `node:24-slim` (`USER node`, `COPY esquema.sql ./`), `.dockerignore` y `.github/workflows/imagen.yml` con `${GITHUB_REPOSITORY,,}` y `${GITHUB_SHA}` (paquetes en `Public`).
+   - **Despliegue en AWS y Azure**: `deploy/aws/01-red.sh` a `06-evidencia.sh` (Security Groups con tag `Name=sg-*`, `nat` con `iptables -F`, secretos en SSM Parameter Store `SecureString`, Kafka `network_mode: host`, RabbitMQ `erlang.cookie` `999:999` `400`); `deploy/azure/` (`--default-outbound false`, `cloud-init-*.yaml` en ASCII puro sin tildes/ñ, regla `DOCKER-USER` y VMs en **`VM deallocated`**).
+* Guías de referencia detalladas disponibles en:
+  - [`references/escalamiento_replicacion_y_lag_d13_a13.md`](./references/escalamiento_replicacion_y_lag_d13_a13.md)
+  - [`references/taller_e2_consumidores_panel_ghcr_nube_l10.md`](./references/taller_e2_consumidores_panel_ghcr_nube_l10.md)
+
 
 

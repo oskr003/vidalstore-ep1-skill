@@ -45,11 +45,11 @@ En VidalStore los topics no se crean con nombres libres ni de forma dinámica en
 
 | Topic | Particiones | Réplicas | Retención / Política | Propósito en VidalStore |
 | :--- | :---: | :---: | :--- | :--- |
-| **`vidalstore.compras`** | 3 | 3 | `retention.ms=604800000` (7 días) | Publicación de eventos `compra.realizada` y `licencia.revocada`. Emite el microservicio de persistencia tras guardar en PostgreSQL. |
-| **`vidalstore.actividad`** | 3 | 3 | `retention.ms=86400000` (1 día) | Telemetría, navegación de catálogo y sesiones de usuarios emitidas por el Gateway/BFF. |
-| **`vidalstore.compras.dlt`** | 3 | 3 | `retention.ms=604800000` (7 días) | Dead Letter Topic para eventos de compra malformados o no procesables tras agotar reintentos. |
-| **`vidalstore.actividad.dlt`** | 3 | 3 | `retention.ms=86400000` (1 día) | Dead Letter Topic para telemetría venenosa. |
-| **`vidalstore.catalogo`** *(Requisito Grupos de 3)* | 3 | 3 | `cleanup.policy=compact`<br>`min.cleanable.dirty.ratio=0.1` | Registro compactado del estado actual de los juegos. La clave es `juegoId`; Kafka conserva únicamente el último valor para cada clave, sirviendo como almacén de estado en streaming. |
+| **`vidalstore.compras`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=604800000` (7 días) | Publicación de eventos `compra.realizada` y `licencia.revocada` (`key = usuarioSub`, `401` eventos en el dataset: `P0=147, P1=141, P2=113`). Emite el microservicio de licencias tras guardar en PostgreSQL. |
+| **`vidalstore.actividad`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=86400000` (1 día) | Telemetría de partidas (`partida.iniciada`, `partida.terminada`) y búsquedas (`key = juegoId`, `3.039` eventos en el dataset; partición caliente `P0=1.751 [57,6%]` por el juego `292030`, `P1=520`, `P2=768`). |
+| **`vidalstore.compras.dlt`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=604800000` (7 días) | Dead Letter Topic para eventos de compra malformados o no procesables tras agotar reintentos. |
+| **`vidalstore.actividad.dlt`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=86400000` (1 día) | Dead Letter Topic para telemetría venenosa. |
+| **`vidalstore.catalogo`** *(Requisito Grupos de 3)* | 3 | 3 | `min.insync.replicas=2`<br>`cleanup.policy=compact`<br>*(SIN `retention.ms`)* | Registro compactado del estado actual de los juegos (`juego.publicado`, `precio.cambiado` / `juego.actualizado`). La clave es `juegoId`; Kafka conserva el último valor de cada clave. No lleva `retention.ms` para que juegos sin cambios de precio no se borren por antigüedad. |
 
 ---
 
@@ -127,4 +127,22 @@ A partir de la corrección oficial de la Entrega 1 (E1) por parte del docente, s
    - En Azure: incluir la salida de `az vm list-skus` en `region.txt` para validar la existencia y cuota de `Standard_B2ats_v2` y `Standard_B2als_v2`.
    - En AWS: asegurar que los scripts de prueba no dependan de dry-run casero y validar el rol asignado.
    - En `docs/red.md`: eliminar cualquier placeholder `<...>` residual del template de red.
+
+---
+
+## 8. Cifras Oficiales del Dataset de VidalStore y Guías de la E2 (D13, Lab A13 y L10)
+
+Al procesar los `3.039` eventos de `vidalstore.actividad` y los `401` eventos de `vidalstore.compras` en `vidalstore-eventos`:
+1. **`vidalstore-panel` (`kpi_minuto`)**:
+   - Al cierre de la jornada (`22:00` UTC / `18:00` Chile): **`362` partidas en curso**.
+   - Pico máximo de la jornada: **`480` partidas en curso a las `21:46`**.
+   - Compras brutas registradas: **`380` compras por `6.291.370 CLP`**.
+2. **`vidalstore-alertas` (`ventanas_actividad` + `alertas`)**:
+   - Con umbral mínimo de partidas terminadas (`MINIMO = 3` o `5`) y más de `20%` de error en ventanas fijas de 5 minutos UTC: dispara **1 sola alerta** correspondiente al **juego `1328670`** (*Mass Effect Legendary Edition*) en la ventana **`21:30` a `21:35` UTC** con **`68` errores de `69` terminadas (`98,6%`)**.
+3. **`vidalstore-historial` (`ventas_semana` + `compras_vistas`)**:
+   - **`380` compras**, **`15` revocaciones** y **`6.032.190 CLP` netos** (descontando en la semana original el precio pagado de la compra asociada al mismo `licenciaId`).
+4. **Guías detalladas de la Semana 13 y Entrega 2**:
+   - [Escalamiento, Replicación, Diagnóstico y Consumer Lag (D13 y Lab A13)](./escalamiento_replicacion_y_lag_d13_a13.md)
+   - [Taller de la E2: Consumer Groups, Panel en Vivo, GHCR y Despliegue en AWS/Azure (L10)](./taller_e2_consumidores_panel_ghcr_nube_l10.md)
+
 

@@ -70,7 +70,7 @@ def log_fail(msg):
 
 
 def audit_gitattributes(root_dir):
-    print(f"\n{C_BOLD}[1/4] Verificando .gitattributes e higiene EOL en repositorios...{C_RESET}")
+    print(f"\n{C_BOLD}[1/8] Verificando .gitattributes e higiene EOL en repositorios...{C_RESET}")
     for repo in REPOS:
         repo_path = os.path.join(root_dir, repo)
         if not os.path.isdir(repo_path):
@@ -90,7 +90,7 @@ def audit_gitattributes(root_dir):
 
 
 def audit_kafka_dependencies(root_dir):
-    print(f"\n{C_BOLD}[2/4] Verificando dependencias de Kafka en repositorios Node.js...{C_RESET}")
+    print(f"\n{C_BOLD}[2/8] Verificando dependencias de Kafka en repositorios Node.js...{C_RESET}")
     for repo in REPOS:
         pkg_path = os.path.join(root_dir, repo, "package.json")
         if not os.path.isfile(pkg_path):
@@ -123,7 +123,7 @@ def audit_kafka_dependencies(root_dir):
 
 
 def audit_kraft_compose(root_dir):
-    print(f"\n{C_BOLD}[3/6] Verificando configuración KRaft en Docker Compose...{C_RESET}")
+    print(f"\n{C_BOLD}[3/8] Verificando configuración KRaft en Docker Compose...{C_RESET}")
     candidatos_compose = [
         os.path.join(root_dir, "vidalstore-plataforma", "docker-compose.yml"),
         os.path.join(root_dir, "vidalstore-plataforma", "compose.yml"),
@@ -172,7 +172,7 @@ def audit_kraft_compose(root_dir):
 
 
 def audit_retroalimentacion_e1(root_dir):
-    print(f"\n{C_BOLD}[5/6] Verificando correcciones específicas de la Retroalimentación E1...{C_RESET}")
+    print(f"\n{C_BOLD}[5/8] Verificando correcciones específicas de la Retroalimentación E1...{C_RESET}")
     
     # 1. KAFKA_BROKERS sin fallback hardcodeado en licencias
     lic_prod_path = os.path.join(root_dir, "vidalstore-licencias", "src", "kafka", "kafka-productor.service.ts")
@@ -210,9 +210,9 @@ def audit_retroalimentacion_e1(root_dir):
             dto_compra_code = f.read()
         # Verificar clase CompraRealizadaEventoDto
         if "class CompraRealizadaEventoDto" in dto_compra_code:
-            # Buscar si juegoId está en la clase
-            match = re.search(r"class CompraRealizadaEventoDto.*?\{(.*?)\}", dto_compra_code, re.DOTALL)
-            if match and "juegoId" in match.group(1):
+            # Buscar el bloque de la clase CompraRealizadaEventoDto
+            match = re.search(r"class CompraRealizadaEventoDto\b.*?(?=export class|\Z)", dto_compra_code, re.DOTALL)
+            if match and "juegoId" in match.group(0):
                 log_pass("[vidalstore-licencias] CompraRealizadaEventoDto incluye juegoId en el sobre de primer nivel.")
             else:
                 log_warn("[vidalstore-licencias] CompraRealizadaEventoDto NO incluye juegoId en el sobre de primer nivel (IE4).")
@@ -235,7 +235,7 @@ def audit_retroalimentacion_e1(root_dir):
 
 
 def audit_nube_y_red(root_dir):
-    print(f"\n{C_BOLD}[6/6] Verificando evidencias de Nube y Red (E2 preventivo)...{C_RESET}")
+    print(f"\n{C_BOLD}[6/8] Verificando evidencias de Nube y Red (E2 preventivo)...{C_RESET}")
     red_md_path = os.path.join(root_dir, "vidalstore-plataforma", "docs", "red.md")
     if os.path.isfile(red_md_path):
         with open(red_md_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -259,7 +259,7 @@ def audit_nube_y_red(root_dir):
 
 
 def audit_topics_script(root_dir):
-    print(f"\n{C_BOLD}[4/6] Verificando script de topología y topics de VidalStore...{C_RESET}")
+    print(f"\n{C_BOLD}[4/8] Verificando script de topología y topics de VidalStore...{C_RESET}")
     rutas_script = [
         os.path.join(root_dir, "kafka", "topics.sh"),
         os.path.join(root_dir, "vidalstore-plataforma", "kafka", "topics.sh"),
@@ -299,6 +299,136 @@ def audit_topics_script(root_dir):
     else:
         log_warn("No se detectó configuración de compactación (cleanup.policy=compact).")
 
+    if "min.insync.replicas=2" in text:
+        log_pass("min.insync.replicas=2 configurado en topics.sh (D13 / L10).")
+    else:
+        log_warn("No se detectó min.insync.replicas=2 en topics.sh (requerido con replication-factor=3 y acks=all).")
+
+
+def audit_e2_streaming_y_panel(root_dir):
+    print(f"\n{C_BOLD}[7/8] Verificando arquitectura de Consumer Groups, Idempotencia y Panel en Vivo (L10 E2)...{C_RESET}")
+    streaming_dir = os.path.join(root_dir, "vidalstore-eventos", "src", "streaming")
+    if os.path.isdir(streaming_dir):
+        negocio_files = []
+        for r, _, files in os.walk(streaming_dir):
+            for f in files:
+                if f.endswith(".negocio.ts"):
+                    negocio_files.append(os.path.join(r, f))
+        if negocio_files:
+            violaciones_kafka = []
+            for nf in negocio_files:
+                with open(nf, "r", encoding="utf-8", errors="ignore") as fh:
+                    code = fh.read()
+                if "@platformatic/kafka" in code:
+                    violaciones_kafka.append(os.path.relpath(nf, root_dir))
+                if re.search(r"UPDATE\s+\w+.*RETURNING", code, re.IGNORECASE | re.DOTALL) and "WITH " not in code.upper():
+                    log_warn(f"[{os.path.relpath(nf, root_dir)}] Usa UPDATE ... RETURNING sin CTE 'WITH ... SELECT' (trampa de TypeORM L10 §1.7).")
+            if violaciones_kafka:
+                log_fail(f"Clases *.negocio.ts importan @platformatic/kafka (viola separación IE5): {violaciones_kafka}")
+            else:
+                log_pass(f"Las {len(negocio_files)} clases *.negocio.ts están desacopladas de Kafka (IE5).")
+        else:
+            log_warn("[vidalstore-eventos] Aún no se detectan archivos *.negocio.ts en src/streaming/.")
+    else:
+        log_warn("[vidalstore-eventos] Directorio src/streaming/ aún no creado para E2.")
+
+    # Verificar que BFF no importe pg ni typeorm (Regla L10 Tramo 2)
+    bff_pkg = os.path.join(root_dir, "vidalstore-bff", "package.json")
+    if os.path.isfile(bff_pkg):
+        try:
+            with open(bff_pkg, "r", encoding="utf-8") as fh:
+                pkg = json.load(fh)
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            if "pg" in deps or "typeorm" in deps or "@nestjs/typeorm" in deps:
+                log_fail("[vidalstore-bff] El BFF incluye dependencias de Postgres (pg/typeorm); debe consultar a vidalstore-eventos por HTTP.")
+            else:
+                log_pass("[vidalstore-bff] El BFF no tiene dependencias de Postgres (cumple arquitectura de Panel en Vivo L10).")
+        except Exception:
+            pass
+
+    # Verificar docs/topics.md, docs/consumer-groups.md y docs/despliegue.md
+    for doc_name in ["topics.md", "consumer-groups.md", "despliegue.md"]:
+        doc_path = os.path.join(root_dir, "vidalstore-plataforma", "docs", doc_name)
+        if os.path.isfile(doc_path):
+            log_pass(f"[vidalstore-plataforma/docs/{doc_name}] Documento obligatorio de E2 presente.")
+            if doc_name == "despliegue.md":
+                with open(doc_path, "r", encoding="utf-8", errors="ignore") as dfh:
+                    dcontent = dfh.read()
+                # Verificar presencia de los 8 comandos requeridos por EP3 Entrega 2 pág. 9
+                cmds_despliegue = [
+                    ("describe-instances", "Comando #1 AWS (IPs privadas)"),
+                    ("describe-security-groups", "Comando #2 AWS (filtro puerto 22)"),
+                    ("kafka-metadata-quorum.sh", "Comando #3 AWS (quórum controllers 1, 2 y 3)"),
+                    ("vidalstore.compras", "Comando #4 AWS (3 particiones con ISR 3)"),
+                    ("vidalstore.actividad", "Comando #5 AWS (offsets 1751, 520 y 768)"),
+                    ("api.ipify.org", "Comando #6 Azure (IP de salida por gw-azure)"),
+                    ("route-table route list", "Comando #7 Azure (tabla de rutas privada a gw-azure)"),
+                    ("powerState", "Comando #8 Azure (máquinas en estado deallocated)"),
+                ]
+                for token, label in cmds_despliegue:
+                    if token in dcontent:
+                        log_pass(f"[docs/despliegue.md] Incluye evidencia de: {label}.")
+                    else:
+                        log_warn(f"[docs/despliegue.md] Falta evidencia de: {label} (EP3 Entrega 2 pág. 9).")
+        else:
+            log_warn(f"[vidalstore-plataforma/docs/{doc_name}] Aún no existe (obligatorio para E2).")
+
+    # Verificar repositorios.md (formato inalterable para script docente)
+    repomd_path = os.path.join(root_dir, "vidalstore-plataforma", "docs", "repositorios.md")
+    if os.path.isfile(repomd_path):
+        with open(repomd_path, "r", encoding="utf-8", errors="ignore") as rfh:
+            rcontent = rfh.read()
+        if "SHA de main al entregar" in rcontent and "Comando: `bash levantar.sh`" in rcontent:
+            log_pass("[vidalstore-plataforma/docs/repositorios.md] Formato normativo de E2 cumplido (script de corrección docente).")
+        else:
+            log_warn("[vidalstore-plataforma/docs/repositorios.md] Verificar cabeceras y tabla | Repositorio | URL | SHA de main al entregar | (EP3 E2 pág. 12).")
+
+
+def audit_e2_ghcr_y_nube_l10(root_dir):
+    print(f"\n{C_BOLD}[8/8] Verificando Dockerfiles Multi-Stage, Workflows GHCR y Reglas Cloud L10...{C_RESET}")
+    servicios_con_imagen = [r for r in REPOS if r != "vidalstore-plataforma"]
+    for repo in servicios_con_imagen:
+        repo_dir = os.path.join(root_dir, repo)
+        if not os.path.isdir(repo_dir):
+            continue
+        dockerfile = os.path.join(repo_dir, "Dockerfile")
+        if os.path.isfile(dockerfile):
+            with open(dockerfile, "r", encoding="utf-8", errors="ignore") as fh:
+                df_text = fh.read()
+            if "AS build" in df_text and ("USER node" in df_text or "nginx:" in df_text):
+                log_pass(f"[{repo}] Dockerfile multi-stage válido (AS build + USER node / nginx).")
+            else:
+                log_warn(f"[{repo}] Dockerfile presente pero verificar multi-stage 'AS build' y 'USER node'.")
+
+        wf_path = os.path.join(repo_dir, ".github", "workflows", "imagen.yml")
+        if os.path.isfile(wf_path):
+            with open(wf_path, "r", encoding="utf-8", errors="ignore") as fh:
+                wf_text = fh.read()
+            if ":latest" in wf_text:
+                log_fail(f"[{repo}] imagen.yml publica con tag ':latest' (prohibido en E2; usar ${{GITHUB_SHA}}).")
+            elif "GITHUB_SHA" in wf_text or "github.sha" in wf_text:
+                log_pass(f"[{repo}] Workflow .github/workflows/imagen.yml etiqueta con SHA del commit.")
+
+    # Verificar ASCII puro en cloud-init de Azure (trampa silenciosa L10 §6.3)
+    azure_dir = os.path.join(root_dir, "vidalstore-plataforma", "deploy", "azure")
+    if os.path.isdir(azure_dir):
+        for fname in os.listdir(azure_dir):
+            if fname.startswith("cloud-init") and fname.endswith(".yaml"):
+                fpath = os.path.join(azure_dir, fname)
+                with open(fpath, "rb") as fh:
+                    raw = fh.read()
+                non_ascii = [b for b in raw if b > 127]
+                if non_ascii:
+                    log_fail(f"[deploy/azure/{fname}] Contiene caracteres no ASCII (tildes/ñ). cloud-init en Azure descartará el archivo en silencio.")
+                else:
+                    log_pass(f"[deploy/azure/{fname}] 100% ASCII puro (seguro para cloud-init en Azure).")
+                if fname == "cloud-init-gw-azure.yaml":
+                    txt = raw.decode("utf-8", errors="ignore")
+                    if "DOCKER-USER" in txt:
+                        log_pass("[deploy/azure/cloud-init-gw-azure.yaml] Incluye regla iptables DOCKER-USER para permitir NAT con Docker.")
+                    else:
+                        log_warn("[deploy/azure/cloud-init-gw-azure.yaml] Falta regla iptables DOCKER-USER (Docker bloqueará el tráfico NAT de bff).")
+
 
 def main():
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -313,6 +443,8 @@ def main():
     audit_topics_script(root_dir)
     audit_retroalimentacion_e1(root_dir)
     audit_nube_y_red(root_dir)
+    audit_e2_streaming_y_panel(root_dir)
+    audit_e2_ghcr_y_nube_l10(root_dir)
 
     print(f"\n{C_BOLD}{C_CYAN}======================================================================{C_RESET}")
     print(f"{C_BOLD}Resumen de Auditoría EP3:{C_RESET}")

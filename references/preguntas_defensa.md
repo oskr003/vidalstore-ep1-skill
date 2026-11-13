@@ -1,15 +1,18 @@
-# Banco de Preguntas y Respuestas Modelo · Defensa Individual EP1 y EP2
+# Banco de Preguntas y Respuestas Modelo · Defensa Individual EP1, EP2 y EP3
 
-La defensa técnica individual representa el **60% de la nota final** (tanto en EP1 como en EP2). El docente Cristian Calderón (`Umbingelelo`) realiza preguntas profundas sobre las decisiones de arquitectura, los tokens, los flujos criptográficos, la mensajería asíncrona, Docker Compose, DLQ y las pruebas en vivo.
+La defensa técnica individual representa el **60% de la nota final** (en EP1, EP2 y EP3). El docente Cristian Calderón (`Umbingelelo`) realiza preguntas profundas sobre las decisiones de arquitectura, los tokens, los flujos criptográficos, la mensajería asíncrona, Docker Compose, DLQ/DLT, streaming en Kafka, despliegue multi-cloud y las pruebas en vivo.
 
 Este documento consolida:
 1. **Las 8 preguntas oficiales de `Pulso.pdf` (Tramo 12.2)** (Bloque A).
 2. **Las preguntas complementarias de rúbrica EP1 (IE1 a IE10)** (Bloques B, C, D y E).
 3. **El guion oficial de defensa técnica de la clase D6**: reloj de 15 minutos, 5 flujos y método de 4 pasos.
 4. **Las 15 preguntas oficiales de D8, L7A y L7 (Mensajería, Compose, DLQ y Persistencia)** (Bloque F).
-5. **Las preguntas de defensa del Microservicio Administrador (Oscar · IE6, IE7, IE8, IE14, IE17, IE18)** (Bloque G: G.1 a G.10).
+5. **Las preguntas de defensa del Microservicio Administrador (Oscar · IE6, IE7, IE8, IE14, IE17, IE18)** (Bloque G: G.1 a G.13).
 6. **Diagnóstico, Idempotencia, Clúster y Políticas (D9 y LA9)** (Bloque H: H.1 a H.14).
 7. **Las 13 Preguntas Oficiales del Enunciado EP2 (EP2-Caso-VidalStore.pdf §5.3)** (Bloque I: I.1 a I.13).
+8. **Las 18 Preguntas Oficiales de L8 y L8A (Clúster RabbitMQ, Quorum Queues, Admin y Políticas)** (Bloque J: J.1 a J.18).
+9. **Las 15 Preguntas Oficiales de D13 y Lab A13 (Consumer Lag, Tendencia, Throughput vs Latencia, Percentiles, Escalamiento, Partición Caliente, Replicación, ISR y `min.insync.replicas`)** (Bloque K: K.1 a K.15).
+10. **Las 16 Preguntas Oficiales de L10 — Taller de la E2 (Consumer Groups, Idempotencia, CTE de TypeORM, Panel en Vivo, Rebobinado, Catálogo Compactado, Multi-Stage GHCR, AWS y Azure)** (Bloque L: L.1 a L.16).
 
 ---
 
@@ -588,6 +591,393 @@ Este documento consolida:
   > "* **A favor de `reject-publish` en DLQ**: Si una DLQ alcanza su límite, el sistema lleva horas o días roto. El problema no es dónde guardar el mensaje siguiente, sino que el fallo se note fuerte en lugar de seguir tragando en silencio.  
   > * **A favor de `drop-head` en DLQ**: Prefiere conservar siempre los mensajes muertos más recientes descartando los antiguos, garantizando que el equipo tenga los errores frescos para diagnosticar.  
   > * **Anclaje `^...$` y `priority: 10`**: Sin el ancla inicial `^`, el patrón `q\.avisos` calzaría como subcadena dentro de `dlq.avisos`, pisando la política de la DLQ si tienen la misma prioridad. Y usamos `priority: 10` para que cualquier política de prueba creada en vivo con prioridad `0` o `1` no sobreescriba las políticas de las 6 colas operativas."
+
+---
+
+## Bloque K: Preguntas Oficiales de D13 y Lab A13 (Consumer Lag, Tendencia, Throughput, Percentiles, Escalamiento, Partición Caliente, Replicación e ISR)
+
+### K.1. ¿Por qué la key `"18"` cae en la partición `P1` en lugar de `P0` si $18 \bmod 3 = 0$, y qué provoca eso en `biblioteca.lecturas` y `vidalstore.actividad`?
+* **Respuesta Técnica (D13 Slide 4)**:
+  > "Porque Kafka no aplica el módulo sobre el valor numérico entero, sino sobre el hash **`murmur2` de los bytes del string** (`(murmur2(bytes("18")) & 0x7fffffff) % 3`), cuyo resultado es **`1`** (`P1`).  
+  > * En `biblioteca.lecturas` (3 particiones, `2.984` eventos), el libro `18` concentra el `40,2%` de las lecturas y junto con otros libros cuyo hash da `1` deja a **`P1` con `2.279` eventos (`76,4%`)**, `P0` con `492` (`16,5%`) y `P2` con `213` (`7,1%`).  
+  > * En `vidalstore.actividad` (3 particiones, `3.039` eventos, key `juegoId`), el juego `292030` cae en **`P0`**, concentrando **`1.751` eventos (`57,6%`)** en `P0`, `520` en `P1` y `768` en `P2`. A ese fenómeno se le denomina **partición caliente (*hot partition*)**."
+
+---
+
+### K.2. ¿Cuál es la diferencia entre una métrica `counter` y un `gauge`? Clasifica: eventos publicados en un topic, `consumer lag`, compras históricas y memoria libre del broker.
+* **Respuesta Técnica (D13 Slides 5–6)**:
+  > "* **`Counter` (Contador acumulativo)**: Solo sube monotónicamente (solo vuelve a 0 al reiniciar el proceso). No importa su valor aislado sino su **tasa de cambio** ($\Delta \text{valor} / \Delta t$). Son `counter`: **eventos publicados en un topic** (`LOG-END-OFFSET`) y **total de compras históricas**. *(Nota: `kafka_exporter` exporta el offset etiquetado como `gauge`, pero matemáticamente es un `counter` y en Grafana se grafica su `rate`)*.  
+  > * **`Gauge` (Medidor instantáneo)**: Sube y baja libremente según el estado actual. Importa su valor actual y su **tendencia (pendiente)**. Son `gauge`: **`consumer lag`** y **memoria libre del broker**."
+
+---
+
+### K.3. ¿Cómo se calcula el `consumer lag` en `kafka-consumer-groups.sh --describe`, qué significan `LOG-END-OFFSET` y `CURRENT-OFFSET`, y qué columna no tiene sentido sumar?
+* **Respuesta Técnica (D13 Slides 7–10)**:
+  > "Por cada partición $p$, $\text{LAG}_p = \text{LOG-END-OFFSET}_p - \text{CURRENT-OFFSET}_p$:  
+  > * **`LOG-END-OFFSET` (*high watermark*)**: Es el próximo offset que el broker escribirá en esa partición (equivale al total de mensajes escritos en esa partición).  
+  > * **`CURRENT-OFFSET`**: Es el próximo offset que leerá el grupo, es decir, el valor confirmado en el último commit manual (`offset_procesado + 1`).  
+  > * **Qué se suma y qué no**: Tiene sentido sumar `LOG-END-OFFSET` (total de eventos del topic) y sumar `LAG` (total de eventos pendientes del grupo). **No tiene ningún sentido sumar `CURRENT-OFFSET`** cuando aún hay lag, porque es una posición de cursor local a cada partición."
+
+---
+
+### K.4. En el segundo 40, dos grupos muestran exactamente `LAG = 5000`. La Serie A venía de `3000 -> 5000` y la Serie B venía de `7000 -> 5000`. ¿En cuál hay que intervenir y por qué?
+* **Respuesta Técnica (D13 Slides 11–12 y Lab A13 Pregunta 4)**:
+  > "**La tendencia importa más que el valor aislado**: $\text{pendiente} = (\text{lag}_{\text{final}} - \text{lag}_{\text{inicial}}) / \Delta t = \text{entrada} - \text{procesamiento}$.  
+  > * **Serie A (`3000 -> 5000` en 40 s)**: Tiene pendiente **`+50.0 ev/s` (`SUBE`)**. Entran 50 eventos/s más de los que el grupo logra procesar; la fila crece sin techo y **hay que intervenir de inmediato**.  
+  > * **Serie B (`7000 -> 5000` en 40 s)**: Tiene pendiente **`-50.0 ev/s` (`BAJA`)**. El grupo ya procesa 50 ev/s más rápido de lo que entra tras un pico pasado y se vaciará solo a `0` en $5000 / 50 = 100\text{ segundos}$. **No hay que tocar nada**."
+
+---
+
+### K.5. Si un grupo muestra `LAG = 0` durante 10 minutos seguidos, ¿es siempre buena noticia? ¿Cómo lo compruebas?
+* **Respuesta Técnica (D13 Slide 13)**:
+  > "**No siempre es buena noticia.** `LAG = 0` significa que $\text{CURRENT-OFFSET} = \text{LOG-END-OFFSET}$, lo cual ocurre en dos escenarios opuestos:  
+  > 1. El consumidor está sano y procesa al ritmo que entra.  
+  > 2. **El productor se cayó o dejó de publicar hace 10 minutos** (un incidente grave disfrazado de calma).  
+  > Se comprueba mirando en dos mediciones separadas si **`LOG-END-OFFSET` sigue subiendo**."
+
+---
+
+### K.6. ¿Cuál es la diferencia entre `throughput`, `latencia` y `espera en la partición`? Si un consumidor tarda `10 ms` por evento y pasas de 1 a 3 consumidores, ¿baja la latencia a `3,3 ms`?
+* **Respuesta Técnica (D13 Slides 14–16)**:
+  > "* **Latencia**: Tiempo que tarda **un solo evento** en procesarse (ej. `10 ms` en insertar en Postgres).  
+  > * **Throughput**: Cantidad de eventos despachados por segundo ($\text{throughput} = 1000 / \text{ms\_por\_evento}$).  
+  > * **Espera en la partición**: Tiempo que el evento pasa haciendo fila antes de que lo tome un consumidor.  
+  > Al pasar de 1 a 3 consumidores, **la latencia individual NO baja a `3,3 ms`**: cada consumidor sigue tardando exactamente `10 ms` en hablar con Postgres. Lo que se triplica es el **throughput del grupo** (de `100 ev/s` a `300 ev/s`), y lo que baja para el negocio es el **tiempo de espera en la partición**."
+
+---
+
+### K.7. ¿Por qué se mide la latencia con percentiles (`p50` y `p99`) en lugar del promedio, y por qué en Node.js se usa `performance.now()` con `for...of` y jamás `Promise.all`?
+* **Respuesta Técnica (D13 Slides 17–21 y Lab A13 Ejercicio 2)**:
+  > "* **Percentiles vs Promedio**: En una muestra de 10 eventos `[2, 2, 2, 2, 2, 3, 3, 3, 4, 380]` ms, el promedio da `40,3 ms`, un número que no representa ni a los 9 eventos rápidos (`p50 = 2 ms`) ni al evento estancado (`p99 = 380 ms`).  
+  > * **`performance.now()` vs `Date.now()`**: `Date.now()` mide milisegundos enteros y puede saltar o retroceder si NTP ajusta el reloj del sistema; `performance.now()` entrega resolución de microsegundos sobre un reloj monotónico.  
+  > * **`for...of` con `await` vs `Promise.all`**: Un consumidor real de Kafka procesa su partición secuencialmente con `for await (const m of flujo)` para respetar el orden y confirmar el offset después de escribir. Si midiéramos con `Promise.all`, dispararíamos las 200 esperas en paralelo midiendo el temporizador de Node y no el throughput real de un consumidor."
+
+---
+
+### K.8. Si en tu grupo cada escritura en Postgres tarda `40 ms` y al topic llegan `50 eventos/s`, ¿cuántos consumidores necesitas como mínimo para que el lag no suba?
+* **Respuesta Técnica (Lab A13 Pregunta 5)**:
+  > "Si cada escritura tarda `40 ms`, el throughput máximo de 1 consumidor es $1000 / 40 = \mathbf{25\text{ eventos/s}}$.  
+  > Para sostener una tasa de entrada de `50 eventos/s` sin acumular lag se necesitan como mínimo $\lceil 50 / 25 \rceil = \mathbf{2\text{ consumidores}}$ activos (siempre que el topic tenga al menos 2 particiones y la carga esté bien distribuida)."
+
+---
+
+### K.9. ¿Por qué la partición es la unidad mínima de paralelismo en Kafka y qué ocurre al levantar 4 instancias de `eventos` sobre `vidalstore-alertas` vs `vidalstore-panel`?
+* **Respuesta Técnica (D13 Slides 23–25 y L10 Tramo 3)**:
+  > "Una partición nunca puede ser leída simultáneamente por dos consumidores del mismo grupo, porque rompería la garantía de orden por key y pisaría los commits de offset. Por lo tanto, trabajan como máximo $\min(\text{consumidores}, \text{particiones})$ y el resto queda **ocioso (`#PARTITIONS = 0`)**.  
+  > Al levantar **4 instancias de `eventos`**:  
+  > * En **`vidalstore-alertas`** (y **`vidalstore-historial`**), que se suscriben a **1 solo topic de 3 particiones**, `--describe --members` muestra `#PARTITIONS`: **`1, 1, 1 y 0`** (la 4.ª instancia queda ociosa).  
+  > * En **`vidalstore-panel`**, que se suscribe a **2 topics (`actividad` + `compras` = 6 particiones)**, `--describe --members` muestra `#PARTITIONS`: **`2, 2, 1 y 1`** (ninguna queda ociosa; recién habría una ociosa con 7 instancias)."
+
+---
+
+### K.10. En el Escenario 2 de `reparto.mjs` (`P1` caliente con `70 ev/s` y capacidad de `40 ev/s` por consumidor), ¿por qué subir de 3 a 6 o 9 consumidores no quita la marca `[SE ATRASA]` de `c2`? ¿Qué sí lo resuelve?
+* **Respuesta Técnica (D13 Slides 26–28 y Lab A13 Pregunta 6)**:
+  > "Con 3 consumidores, `c2` atiende `P1 + P4` (`70 + 10 = 80 ev/s`). Al subir a 6 o 9 consumidores, `c2` queda dedicado exclusivamente a `P1`, pero **`P1` por sí sola trae `70 ev/s`**, lo que sigue superando su capacidad de `40 ev/s`. Como Kafka jamás divide una partición entre dos consumidores del mismo grupo, agregar más consumidores solo deja instancias ociosas.  
+  > Solo hay dos soluciones reales: **(1) optimizar el consumidor** para que supere los `70 ev/s` (ej. caché en memoria o escrituras en lote), o **(2) cambiar la key de particionamiento** si el negocio no exige orden estricto por esa clave."
+
+---
+
+### K.11. ¿Cuáles son las 5 causas de lag creciente y cómo distingues cada una mirando `kafka-consumer-groups.sh --describe`?
+* **Respuesta Técnica (D13 Slides 29–33)**:
+  > "1. **Consumidor lento**: El `LAG` sube de forma **pareja en todas las particiones** y todas tienen `CONSUMER-ID` activo.  
+  > 2. **Partición caliente**: Casi todo el `LAG` se acumula en **una sola partición** cuyo `LOG-END-OFFSET` es mucho más alto que el resto.  
+  > 3. **Pocos consumidores**: El `LAG` sube en las particiones que **comparten el mismo `CONSUMER-ID`** (un consumidor leyendo varias particiones).  
+  > 4. **Consumidor caído sin cierre limpio**: El `LAG` sube en su partición mientras el broker sigue mostrando el `CONSUMER-ID` muerto durante los `60 s` del `sessionTimeout` antes de rebalancear (el guion `-` solo aparece si no queda ningún miembro vivo en el grupo).  
+  > 5. **Rebalanceo continuo**: Todas las particiones detienen su lectura a la vez y la consola advierte `Warning: Consumer group is rebalancing`."
+
+---
+
+### K.12. ¿Cuáles son las 4 palancas para resolver problemas de capacidad, ordenadas de la más barata a la más cara, y qué peligro tiene agregar particiones a un topic con key?
+* **Respuesta Técnica (D13 Slide 34)**:
+  > "De la más barata a la más cara:  
+  > 1. **Hacer más rápido al consumidor** (gratis y reversible: caché en memoria, índices SQL).  
+  > 2. **Agregar consumidores al grupo** (barato y reversible: útil solo si algún consumidor atiende $> 1$ partición).  
+  > 3. **Agregar particiones al topic** (caro e **irreversible**: no se pueden reducir particiones, los mensajes ya escritos no se mueven, y al cambiar $N$ en `murmur2(key) % N` **las keys nuevas caen en otra partición distinta de su historia previa**, rompiendo el orden por key).  
+  > 4. **Agregar brokers al clúster** (el más caro: y un broker nuevo no recibe particiones existentes hasta ejecutar una reasignación manual)."
+
+---
+
+### K.13. ¿Cuál es el orden estricto de los 6 pasos para diagnosticar un problema de consumer lag?
+* **Respuesta Técnica (D13 Slide 35)**:
+  > "1. **Mirar la tendencia del lag** (2 mediciones: ¿sube, baja o está estable?).  
+  > 2. **Mirar el lag por partición** (`--describe`: ¿parejo o partición caliente?).  
+  > 3. **Mirar el `CONSUMER-ID` de cada partición** (¿un mismo miembro lee varias particiones o hay un caído?).  
+  > 4. **Medir el throughput individual del consumidor** (ms por evento en BD; si es lento, optimizar primero).  
+  > 5. **Agregar consumidores al grupo** (si el consumidor ya es rápido y lee más de 1 partición).  
+  > 6. **Agregar particiones al topic** (último recurso cuando ya hay 1 consumidor rápido por partición)."
+
+---
+
+### K.14. ¿Por qué `acks=all` sin `min.insync.replicas=2` es una trampa, y qué pasa exactamente con 0, 1, 2 y 3 brokers caídos en nuestro clúster de 3 brokers (`replication.factor=3`, `min.insync.replicas=2`, `acks=all`)?
+* **Respuesta Técnica (D13 Slides 38–45 y Lab A13 Pregunta 7)**:
+  > "`acks=all` exige confirmación de todas las réplicas que estén **actualmente en el `ISR`**. Si `min.insync.replicas` fuera `1` (el valor por defecto) y cayeran 2 brokers, el `ISR` quedaría con 1 sola réplica y `acks=all` seguiría aceptando escrituras en un único disco (degradándose en silencio a `acks=1`). Con `min.insync.replicas=2`:  
+  > * **0 brokers caídos (`ISR = 3/3`)**: Acepta escritura confirmada en 3 copias.  
+  > * **1 broker caído (`broker-3`, `ISR = 2/3`)**: Como $2 \ge 2$, **sigue aceptando escrituras sin error** confirmadas en los 2 brokers vivos.  
+  > * **2 brokers caídos (`broker-2` y `broker-3`, `ISR = 1/3`)**: Como $1 < 2$, el líder **rechaza la escritura con `NOT_ENOUGH_REPLICAS`** y Kafka 4.3 tampoco entrega eventos nuevos a los consumidores hasta recuperar el mínimo. Además, en AWS (donde cada VM `mq-1..3` aloja 1 controller + 1 broker), caer 2 máquinas rompe el quórum Raft de controllers (1 de 3).  
+  > * **3 brokers caídos (`ISR = 0/3`)**: Falla la conexión (`Connection failed`). Al reencender, con *unclean leader election* desactivado, **no hay líder hasta que vuelva uno de los últimos brokers que estuvieron en el `ISR`** (`broker-1` o `broker-2`)."
+
+---
+
+### K.15. ¿Qué representan los números `4, 5, 6` en `Replicas` e `Isr` de `kafka-topics.sh --describe`, y cómo se mantienen sincronizadas las réplicas seguidoras?
+* **Respuesta Técnica (D13 Slides 36–37)**:
+  > "Son los `KAFKA_NODE_ID` de los tres brokers en nuestro `compose.yml` (`broker-1 = 4`, `broker-2 = 5`, `broker-3 = 6`; los IDs `1, 2, 3` son los controllers). El primer número de `Replicas` es el *preferred leader*.  
+  > Todo productor escribe únicamente en el **líder** de la partición, y las réplicas **seguidoras (*followers*) hacen *fetch* continuo desde el líder**. Si una seguidora se apaga o se atrasa más de `replica.lag.time.max.ms` (`30 s`), el líder la expulsa del `Isr`."
+
+---
+
+## Bloque L: Preguntas Oficiales de L10 y Enunciado EP3 Entrega 2 (Página 10)
+
+> [!IMPORTANT]
+> ### Las 6 Preguntas Obligatorias del Enunciado EP3 Entrega 2 (Página 10)
+> *«Lo que cada uno tiene que poder explicar después de la E2, porque la defensa lo pregunta:»*
+> 1. **¿Por qué `panel` y `alertas` leen el mismo topic sin estorbarse, y qué hace una cuarta instancia?**
+>    - *Respuesta*: Porque pertenecen a dos **consumer groups distintos** (`vidalstore-panel` y `vidalstore-alertas`). Kafka almacena punteros de commit separados en `__consumer_offsets` para cada grupo; si uno se pausa, reinicia o atrasa, el otro continúa a su propio ritmo. En cuanto a la cuarta instancia: al suscribirse a un topic de 3 particiones (`vidalstore.actividad`), cada una de las 3 primeras instancias asume 1 partición; la cuarta instancia queda **completamente ociosa (`#PARTITIONS = 0`)** porque la partición es la unidad mínima indivisible de concurrencia y no puede subdividirse entre dos consumidores del mismo grupo.
+> 2. **¿Qué pasa si el consumidor muere entre el `INSERT` y el commit del offset?**
+>    - *Respuesta*: El evento ya fue guardado en Postgres pero su offset **no quedó confirmado en Kafka**. Al reanimarse el contenedor o rebalancearse el grupo, Kafka reentrega el mismo mensaje. Al intentar ejecutar el `INSERT`, la restricción **`UNIQUE (evento_id)`** (o clave primaria) en PostgreSQL rechaza la inserción duplicada. El consumidor captura el conflicto como «ya procesado», confirma el offset inmediatamente con `await m.commit()` y avanza sin duplicar agregaciones ni contadores (semántica de entrega *at-least-once* con resultado final *exactly-once*).
+> 3. **¿Por qué el panel no suma dos veces los 17 duplicados?**
+>    - *Respuesta*: Porque el diseño de la persistencia es estrictamente **idempotente**. La tabla receptora posee restricción `PRIMARY KEY (evento_id)` con cláusula `ON CONFLICT (evento_id) DO NOTHING` (o inserción en tabla `eventos_procesados (grupo, evento_id)` en la misma transacción). Cuando el simulador inyecta los 17 eventos duplicados del dataset, Postgres descarta la inserción y la consulta de agregación del panel no incrementa las métricas dos veces.
+> 4. **¿Por qué la key `usuarioSub` deja restar bien una revocación?**
+>    - *Respuesta*: Porque Kafka garantiza el orden total de los mensajes **dentro de una misma partición** mediante el hashing determinista de la clave (`murmur2(usuarioSub) % 3`). Como tanto la compra original (`compra.realizada`) como su revocación posterior (`licencia.revocada`) utilizan la misma key (`usuarioSub`), ambos eventos viajan obligatoriamente a la misma partición y en secuencia temporal monotónica. La revocación siempre llega después de la compra, permitiendo al consumidor encontrar el precio pagado original asociado al `licenciaId` y restarlo limpiamente.
+> 5. **¿Cómo descarga su imagen `mq-1` sin IP pública, y por qué sin `nat` no hay Session Manager?**
+>    - *Respuesta*: `mq-1` se encuentra en una subred privada sin asignación de IP pública. Descarga su imagen de GHCR a través de la instancia `nat`, cuya tabla de rutas privada enruta `0.0.0.0/0` hacia su interfaz de red y ejecuta enmascaramiento con `iptables MASQUERADE`. Por su parte, AWS Systems Manager (SSM) opera mediante el agente `amazon-ssm-agent`, el cual requiere establecer conexiones HTTPS salientes hacia los endpoints públicos de SSM (`ssm.us-east-1.amazonaws.com`). Sin la máquina `nat` operativa, la instancia privada no tiene conectividad saliente a internet y el agente no puede comunicarse con AWS, imposibilitando abrir sesiones de Session Manager.
+> 6. **¿Por qué `bff` sale a internet por `gw-azure`, y qué falta para eso si solo se crea la tabla de rutas?**
+>    - *Respuesta*: Porque la subred privada de Azure tiene configurada la propiedad `--default-outbound false` y su tabla de rutas redirige todo el tráfico saliente (`0.0.0.0/0`) hacia el Virtual Appliance en `10.1.1.4` (`gw-azure`), saliendo con la IP pública estática de esta última. Sin embargo, para que el tráfico fluya con éxito **no basta solo con la tabla de rutas**: faltan 3 configuraciones críticas en `gw-azure`: (1) activar `--ip-forwarding true` en su tarjeta de red de Azure, (2) habilitar el reenvío IP en el kernel Linux (`net.ipv4.ip_forward = 1`), y (3) configurar reglas de NAT en `iptables`, agregando explícitamente reglas en la cadena `DOCKER-USER` para evitar que las reglas de Docker descarten el tráfico reenviado.
+
+---
+
+### L.1. ¿Cómo están organizados los consumer groups dentro de `vidalstore-eventos` y por qué cada grupo se divide en `<grupo>.consumidor.ts` y `<grupo>.negocio.ts`? (`IE5`)
+* **Respuesta Técnica (L10 §1.1–1.4)**:
+  > "Cada consumer group vive en su propio módulo NestJS dentro de `src/streaming/<grupo>/` y separa responsabilidades en dos clases:  
+  > 1. **`<grupo>.consumidor.ts` (extiende `ConsumidorKafka<T>`)**: Habla con `@platformatic/kafka`, se suscribe con `autocommit: false`, valida el sobre con `Contrato<T>`, ejecuta el bucle `for await`, reintenta cada 2 s si Postgres falla y ejecuta **`await m.commit()` recién después de escribir en la base**.  
+  > 2. **`<grupo>.negocio.ts` (implementa `Procesador<T>`)**: Contiene únicamente las consultas SQL/TypeORM contra Postgres y **no importa absolutamente nada de Kafka**. Esto cumple el principio de responsabilidad única de `IE5` y permite probar la lógica de negocio sin levantar un broker."
+
+---
+
+### L.2. ¿Qué diferencia hay en `ConsumidorKafka<T>` cuando falla `contrato.validar()` (`EventoInvalido`) frente a cuando falla `negocio.procesar()` (caída de Postgres)?
+* **Respuesta Técnica (L10 §1.2–1.3)**:
+  > "* **Cuando falla `contrato.validar()` (`EventoInvalido`)**: El mensaje tiene un error permanente en el dato (JSON roto, falta `eventoId`, versión distinta de `1`). Reintentarlo un millón de veces dará el mismo fallo y bloquearía la partición. Por eso en la E2 se registra un `WARN ... INVALIDO`, **se hace `await m.commit()`** para avanzar (y en la E3 se publica antes en el `.dlt`).  
+  > * **Cuando falla `negocio.procesar()` (error de Postgres)**: El mensaje es válido pero la base de datos está caída o reiniciándose. `procesarHastaEscribir()` **no hace commit**, registra una advertencia y reintenta cada **2 segundos** hasta que Postgres responda."
+
+---
+
+### L.3. ¿Cuáles son las tres formas de idempotencia en Postgres implementadas en `eventos` y por qué la clave primaria de `eventos_procesados` es `(grupo, evento_id)` y no solo `evento_id`?
+* **Respuesta Técnica (L10 §1.5–1.9)**:
+  > "1. **Una fila por evento (`kpi_minuto` en `panel`)**: La PK es `evento_id`; inserta con `ON CONFLICT (evento_id) DO NOTHING RETURNING evento_id`.  
+  > 2. **Contadores + tabla `eventos_procesados` en la misma transacción (`alertas` e `historial`)**: Dentro de `this.base.transaction(...)`, inserta primero en `eventos_procesados (grupo, evento_id)` con `ON CONFLICT DO NOTHING RETURNING evento_id`; solo si devuelve fila actualiza los contadores.  
+  > 3. **Reemplazo con guarda temporal (`catalogo` en grupos de 3)**: `ON CONFLICT (juego_id) DO UPDATE ... WHERE catalogo.emitido_en < EXCLUDED.emitido_en`.  
+  > La clave primaria de `eventos_procesados` debe ser compuesta **`(grupo, evento_id)`** porque en Kafka un mismo evento (ej. una compra) es leído legítimamente por varios consumer groups independientes (`panel` e `historial`). Si la PK fuera solo `evento_id`, el primer grupo en procesarlo bloquearía al segundo."
+
+---
+
+### L.4. ¿Por qué un `UPDATE ... RETURNING` directo en `tx.query(...)` de TypeORM falla silenciosamente al desestructurar `const [p] = ...` y cómo lo resolviste?
+* **Respuesta Técnica (L10 §1.7, pág. 26)**:
+  > "Porque en TypeORM, `tx.query('UPDATE ... RETURNING ...')` no devuelve el arreglo `filas`, sino una tupla de dos elementos: **`[filas, cantidadActualizada]`**. Al hacer `const [p] = ...`, `p` recibe el arreglo `filas` completo en lugar del primer objeto, dejando `p.semana` y `p.precio` como `undefined` sin lanzar ningún error.  
+  > Lo resolvimos envolviendo el `UPDATE ... RETURNING` en un CTE **`WITH devuelto AS (UPDATE ... RETURNING ...) SELECT ... FROM devuelto`**, ya que al tratarse de una sentencia `SELECT`, TypeORM devuelve directamente el arreglo de filas."
+
+---
+
+### L.5. En `vidalstore-alertas`, ¿por qué las ventanas de 5 minutos se calculan sobre `emitidoEn` del evento y no con `now()`, y por qué se exige un mínimo de partidas terminadas?
+* **Respuesta Técnica (L10 §1.4 y §1.6)**:
+  > "Se trunca `emitidoEn` (`Math.floor(Date.parse(emitidoEn) / 300_000) * 300_000`) porque el simulador y los reprocesos reproducen una jornada histórica a cámara rápida; si usáramos `now()` del reloj del contenedor, los 3.039 eventos caerían todos en el minuto actual.  
+  > Además, exigimos `terminadas >= MINIMO` (ej. `3` o `5`) además de `porcentaje_error > 20%` porque sin un mínimo, una ventana tranquila con 1 sola partida que casualmente falló tendría `1/1 = 100%` de error y dispararía una falsa alarma. Con el mínimo se filtra el ruido y queda únicamente el incidente real del **juego `1328670` entre las `21:30` y `21:35` UTC (`68` errores de `69` terminadas)**."
+
+---
+
+### L.6. En `vidalstore-historial`, si el evento `licencia.revocada` no trae el precio en su payload, ¿cómo sabe el consumidor cuánto dinero descontar y qué garantiza que la compra original ya esté en la tabla?
+* **Respuesta Técnica (L10 §1.7 y §1.11)**:
+  > "Cuando llega `compra.realizada`, el consumidor guarda el detalle de esa licencia (`licencia_id`, `juego_id`, `semana`, `precio_pagado`) en la tabla auxiliar `compras_vistas` (o `licencias_vistas`) y suma en `ventas_semana`. Cuando más tarde llega `licencia.revocada`, busca la fila original por `licencia_id`, la marca como revocada y descuenta ese mismo monto en la semana original (`380` compras por `6.291.370 CLP` menos `15` revocaciones = **`6.032.190 CLP` netos**).  
+  > Lo que garantiza que `compra.realizada` llegue siempre antes que `licencia.revocada` es que el topic `vidalstore.compras` usa **`usuarioSub` como `record key`**, enviando ambos eventos del mismo jugador a la misma partición en orden estricto."
+
+---
+
+### L.7. ¿Cómo viaja la petición del panel en vivo desde Angular hasta Postgres y por qué el BFF no consulta las tablas directamente?
+* **Respuesta Técnica (L10 Tramo 2)**:
+  > "La vista `/panel` de Angular consulta cada 5 s `GET /v1/panel/en-vivo` al **Gateway (`:8080`)**, que valida el JWT y el scope y reenvía al **BFF (`:3000/panel/en-vivo`)**. El BFF valida nuevamente el JWT y exige `@Roles('administradores')` con `RolGuard`, y hace `fetch` interno a **`eventos` (`:3010/panel/en-vivo`)**, donde `PanelNegocio` ejecuta 3 consultas en paralelo con `Promise.all` contra Postgres.  
+  > El BFF **jamás se conecta a Postgres** porque no es dueño de ninguna tabla: toda la lectura y escritura de las proyecciones de streaming pertenece exclusivamente al microservicio `eventos`."
+
+---
+
+### L.8. ¿Por qué `kafka-consumer-groups.sh --reset-offsets` falla si `eventos` está corriendo y cuáles son los pasos exactos para rebobinar un grupo y demostrar idempotencia/reconstrucción? (`IE7`)
+* **Respuesta Técnica (L10 §3.1)**:
+  > "Kafka prohíbe cambiar los offsets de un grupo con miembros conectados (`Error: Assignments can only be reset if the group '...' is inactive, but the current state is Stable`) porque los consumidores activos sobrescribirían el offset en su siguiente commit.  
+  > Los pasos son: **(1)** `docker compose stop eventos` (el grupo pasa a `Empty`); **(2)** `--reset-offsets --to-earliest --execute` sobre el grupo (`NEW-OFFSET = 0`); **(3)** `TRUNCATE` de la tabla del grupo y `DELETE FROM eventos_procesados WHERE grupo = '...'`; y **(4)** `docker compose start eventos`. En ~2 segundos el grupo relee el log desde el inicio y reconstruye exactamente las mismas cifras sin mover el offset de los otros dos grupos."
+
+---
+
+### L.9. ¿Cómo funciona la compactación en `vidalstore.catalogo` (Grupos de 3), por qué no lleva `retention.ms` y por qué el productor lee el topic desde `offset 0` antes de sembrar?
+* **Respuesta Técnica (L10 §1.9 y §3.5)**:
+  > "* **`cleanup.policy=compact` sin `retention.ms`**: La compactación conserva siempre el último mensaje de cada `key` (`juegoId`). Si tuviera `retention.ms` (por defecto 7 días), Kafka borraría por antigüedad los juegos cuyo precio no ha cambiado en una semana, dejando el catálogo incompleto.  
+  > * **Lectura previa en el productor**: Al arrancar, el microservicio de catálogo lee su propio topic desde `offset 0` para conocer el último estado publicado de cada juego y publicar únicamente los juegos nuevos o modificados, evitando llenar el topic con duplicados en cada reinicio.  
+  > * **Reconstrucción en el consumidor**: El grupo `vidalstore-catalogo` consume con `mode: EARLIEST` y aplica `WHERE catalogo.emitido_en < EXCLUDED.emitido_en` por si el segmento activo aún conserva versiones previas sin compactar."
+
+---
+
+### L.10. ¿Qué contiene cada etapa del `Dockerfile` multi-stage de un servicio NestJS y cómo compruebas que la imagen final cumple las reglas de seguridad de la E2?
+* **Respuesta Técnica (L10 Tramo 4)**:
+  > "* **Etapa 1 (`FROM node:24-slim AS build`)**: Instala todas las dependencias (`npm ci`, incluyendo TypeScript y `@nestjs/cli`) y compila `src/` a JavaScript en `/app/dist`.  
+  > * **Etapa 2 (`FROM node:24-slim`)**: Define `ENV NODE_ENV=production`, instala solo dependencias de producción (`npm ci --omit=dev && npm cache clean --force`), copia `/app/dist` desde la etapa `build` (y `COPY esquema.sql ./` en `catalogo`, `licencias` y `eventos`), y cambia al usuario sin privilegios **`USER node` (`uid=1000`)**.  
+  > * **Comprobación**: Ejecutando `id` dentro del contenedor responde `uid=1000(node)` (no `root`), y buscando el binario `nest` en `/app/node_modules` devuelve `0`."
+
+---
+
+### L.11. En `.github/workflows/imagen.yml`, ¿por qué se usa `${GITHUB_REPOSITORY,,}` y `${GITHUB_SHA}` en lugar de `:latest`, y cómo verificas que el docente podrá descargar la imagen?
+* **Respuesta Técnica (L10 §4.4–4.6)**:
+  > "* **`${GITHUB_REPOSITORY,,}`**: Convierte el propietario y nombre del repositorio a minúsculas en bash, porque Docker y GHCR rechazan etiquetas de imagen con letras mayúsculas.  
+  > * **`${GITHUB_SHA}` en vez de `:latest`**: Ata de forma inmutable cada imagen al hash exacto del commit en `main` que la construyó, haciendo auditable qué versión está corriendo en la nube.  
+  > * **Verificación sin credenciales**: Tras cambiar la visibilidad de los 7 paquetes a **Public** en GHCR, ejecutamos `docker logout ghcr.io && docker pull --platform linux/amd64 ghcr.io/<usuario>/<repo>:<sha>`."
+
+---
+
+### L.12. En AWS (`deploy/aws/`), ¿por qué no se puede crear un Security Group con `--group-name sg-gw`, por qué `nat-user-data.sh` ejecuta `iptables -F`, y dónde se guardan las contraseñas?
+* **Respuesta Técnica (L10 Tramo 5)**:
+  > "1. **Prefijo `sg-` reservado**: AWS rechaza cualquier `--group-name` que comience con `sg-` (`GroupName cannot start with reserved prefix "sg-"`). Por eso creamos el grupo con `--group-name vidalstore-gw` y le asignamos el nombre pedido mediante el tag **`Name=sg-gw`**.  
+  > 2. **`iptables -F` en `nat`**: Amazon Linux 2023 trae por defecto una regla en la cadena `FORWARD` que rechaza todo el tráfico (`REJECT all -- icmp-host-prohibited`). Si no se limpia la tabla `filter` con `iptables -F` además del `MASQUERADE` y `--no-source-dest-check`, las instancias privadas no salen a internet.  
+  > 3. **Secretos en SSM Parameter Store**: `03-subir.sh` excluye `aws/secretos/*` al sincronizar el bucket S3 y sube `mq-1.env`, `mq-2.env` y `datos.env` a **SSM Parameter Store como `SecureString`**, desde donde cada EC2 los descarga al arrancar."
+
+---
+
+### L.13. En AWS, ¿por qué el `compose.yml` de Kafka en `mq-1..3` usa `network_mode: host` y cómo se configura la cookie de Erlang en RabbitMQ 4.3?
+* **Respuesta Técnica (L10 §5.5)**:
+  > "* **`network_mode: host` en Kafka**: En cada instancia `mq-N` corren juntos un `controller` (`:9093`) y un `broker` (`:19092`), mientras los otros miembros del quórum están en las otras dos EC2 (`10.0.21.11`, `10.0.22.12`, `10.0.21.13`). Con `network_mode: host`, ambos contenedores usan directamente la interfaz de red de la EC2 y se ven por sus IPs privadas sin conflictos de NAT de Docker.  
+  > * **Cookie de Erlang en RabbitMQ 4.3**: Como la variable `RABBITMQ_ERLANG_COOKIE` quedó deprecada, `secretos.sh` escribe el valor sin salto de línea (`printf '%s'`) en `erlang.cookie` con permisos **`chmod 400`** y propietario **`chown 999:999`** (el UID del usuario `rabbitmq` dentro del contenedor) y lo monta en `/var/lib/rabbitmq/.erlang.cookie:ro`."
+
+---
+
+### L.14. En Azure (`deploy/azure/`), ¿qué pasa si pones una tilde o una `ñ` en `cloud-init-gw-azure.yaml` y por qué hay que agregar reglas en `DOCKER-USER`?
+* **Respuesta Técnica (L10 §6.3)**:
+  > "* **Trampa de caracteres no ASCII en `cloud-init`**: Si el archivo YAML lleva una tilde o `ñ`, Azure CLI en Windows lo recodifica en `cp1252`. Al arrancar Ubuntu, `cloud-init` falla al decodificar `UTF-8` (`UnicodeDecodeError`), **descarta el archivo entero sin instalar Docker ni activar el NAT**, pero igual reporta `status: done`. Por eso los `cloud-init-*.yaml` deben ser 100% ASCII puro.  
+  > * **Trampa de Docker sobre `FORWARD`**: Al instalarse `docker.io` en `gw-azure`, Docker cambia la política de la cadena `FORWARD` de `iptables` a `DROP`, cortando el tráfico NAT de la subred privada `10.1.2.0/24`. Para permitir el paso se insertan en `DOCKER-USER` las reglas `-s 10.1.2.0/24 -j ACCEPT` y `-d 10.1.2.0/24 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT`."
+
+---
+
+### L.15. En Azure, ¿por qué la subred `privada` requiere `--default-outbound false` y cuál es la diferencia entre `VM stopped` y `VM deallocated`?
+* **Respuesta Técnica (L10 §6.2 y §6.5)**:
+  > "* **`--default-outbound false`**: A diferencia de AWS, Azure otorga salida implícita a internet a las subredes nuevas. Desactivarla con `--default-outbound false` obliga a que todo el tráfico saliente de `bff` (`10.1.2.4`) pase exclusivamente por la tabla de rutas `rt-privada` hacia el Virtual Appliance `gw-azure` (`10.1.1.4`), saliendo con su IP pública estática.  
+  > * **`VM stopped` vs `VM deallocated`**: Apagar la máquina desde dentro del sistema operativo la deja en `VM stopped`, donde Azure **sigue reservando y cobrando las vCPUs y la RAM cada hora**. Ejecutar `az vm deallocate` (`apagar.sh`) libera el hardware físico y la deja en **`VM deallocated`**, deteniendo el cobro de cómputo y preservando los discos y la IP pública estática."
+
+---
+
+### L.16. ¿Por qué en Windows el archivo `envs-grupoNN-seccion.zip` debe crearse con `/c/Windows/System32/tar.exe` y no con `tar` a secas en Git Bash?
+* **Respuesta Técnica (L10 §7.2)**:
+  > "Porque en Git Bash el comando `tar` por defecto es **GNU tar**, el cual ignora el flag `-a` para formato `.zip` y genera un archivo en formato `.tar` aunque el nombre termine en `.zip` (provocando error de archivo dañado al descomprimirlo). En cambio, `/c/Windows/System32/tar.exe` es **bsdtar** de Windows, que al recibir `-a -c -f archivo.zip` detecta la extensión `.zip` y empaqueta un archivo ZIP estándar genuino."
+
+---
+
+## Bloque M: Preguntas Oficiales y Quizzes de D14 (La E2 de Punta a Punta)
+
+> ### Las Preguntas de Arquitectura, Confirmación, Diagnóstico y Nube de la Clase D14
+
+### M.1. ¿De dónde obtiene el BFF los datos para alimentar el panel en vivo `/panel` y por qué no consulta directamente a Postgres? (Quiz D14.1 · Slide 8)
+* **Pregunta de Quiz**:
+  > *"El administrador abre `/panel` y el BFF necesita las partidas en curso de las 21:46. ¿De dónde las obtiene?"*
+* **Respuesta Técnica Correcta**:
+  > "Se las pide por **HTTP interno a `vidalstore-eventos` (`GET http://eventos:3010/panel/en-vivo`)**, el microservicio dueño de la tabla `kpi_minuto`."
+* **Por qué los distractores son trampas de arquitectura**:
+  > 1. **Abrir conexión a Postgres y consultar `kpi_minuto` directo**: Error grave de encapsulamiento. Cada tabla tiene un único microservicio dueño; si el BFF consulta directo, cualquier migración de base de datos o cambio en el esquema de streaming rompe dos servicios a la vez.  
+  > 2. **Suscribirse a `vidalstore.actividad` y contar él mismo**: Error. Solo contaría eventos que lleguen desde el momento en que se abre la página en el navegador, perdiendo todo el histórico desde las 21:00 y duplicando inútilmente el trabajo de agregación de `vidalstore-panel`.  
+  > 3. **Angular las calcula leyendo Kafka**: Error de seguridad y diseño. El navegador web jamás se conecta a brokers de Kafka; todo pasa a través del API Gateway y el BFF.
+
+---
+
+### M.2. ¿En qué lugar exacto del código del consumidor va el commit del offset y por qué el auto-commit es causal de pérdida grave de puntos? (Quiz D14.2 · Slide 10)
+* **Pregunta de Quiz**:
+  > *"Tu consumidor de `vidalstore-panel` valida el evento, hace el INSERT en `kpi_minuto` y confirma el offset. ¿En qué lugar del código va el commit?"*
+* **Respuesta Técnica Correcta**:
+  > "**Después de escribir en Postgres; y si el evento no cumple el contrato (DTO), después de registrarlo.**  
+  > La regla de oro es: primero se asegura la persistencia relacional, y recién con la confirmación de la base de datos se avisa a Kafka (`commit = offset + 1` con `autocommit: false`). Si el evento viola el contrato, se registra en el log y también se confirma para no congelar la partición. Si falla Postgres, se relanza la excepción y **no se confirma**."
+* **Por qué los distractores son trampas**:
+  > 1. **Apenas llega el mensaje, antes del INSERT**: Si el contenedor muere o es desalojado entre el commit y el INSERT, Kafka cree que ya fue procesado y no lo vuelve a entregar: pérdida irreparable de datos (*at-most-once*).  
+  > 2. **Auto-commit (`autocommit: true`)**: Confirma por tiempo transcurrido (reloj), no por trabajo efectivamente terminado en base de datos; puede confirmar eventos que todavía están encolados o no persistidos. Es de los errores más sancionados en IE5.  
+  > 3. **Solo cuando el INSERT funcionó dejando el inválido sin confirmar**: Un evento que viola el contrato fallará siempre; sin commit, el consumidor reintentará el veneno infinitamente y la partición quedará congelada con el lag subiendo sin control.
+
+---
+
+### M.3. Si el proceso consumidor muere abruptamente entre el INSERT en Postgres y el commit del offset a Kafka, ¿qué sucede al reiniciar el proceso y cómo se garantiza el resultado exactamente una vez? (Predicción D14 · Slide 13)
+* **Respuesta Técnica**:
+  > "1. Kafka no sabe que el evento se escribió en Postgres; solo sabe hasta el último offset confirmado.  
+  > 2. Al arrancar de nuevo el contenedor, Kafka reentrega el offset no confirmado.  
+  > 3. El consumidor intenta ejecutar el `INSERT INTO kpi_minuto ... ON CONFLICT (evento_id) DO NOTHING`.  
+  > 4. Como la clave `evento_id` ya existe en Postgres, la base de datos detecta el conflicto, no inserta una fila duplicada y no incrementa los contadores (`RETURNING evento_id` devuelve 0 filas).  
+  > 5. El consumidor avanza y envía el commit del offset a Kafka.  
+  > 6. **Conclusión**: A pesar de que el transporte es de entrega *al menos una vez* (*at-least-once*), la idempotencia de la tabla garantiza que el estado final en base de datos sea **resultado exactamente una vez** (*effectively exactly-once*), absorbiendo tanto los 17 duplicados del dataset como cualquier caída de proceso."
+
+---
+
+### M.4. En `vidalstore-alertas`, ¿por qué la regla de alerta del 20% de errores exige un umbral mínimo de partidas terminadas por ventana de 5 minutos, y cuántas alertas quedan en el dataset si el mínimo es 3? (Quiz D14.3 · Slides 15 y 16)
+* **Respuesta Técnica**:
+  > "* **Necesidad del Mínimo**: Si una ventana fija de 5 minutos de `emitidoEn` registra una única partida terminada y esta finalizó en error, la tasa de fallos es $1/1 = 100\%$, superando el 20%. Sin un mínimo de partidas, una sola falla aislada dispararía una alerta crítica falsa, generando fatiga de alarmas.  
+  > * **Dataset de VidalStore con mínimo de 3 partidas**: En el dataset existen 5 ventanas que superan el 20%: juego `2379780` (1/1), juego `1328670` (68/69), juego `1203220` (dos ventanas de 1/2) y juego `1145360` (1/1). Al exigir un mínimo de 3 partidas terminadas, **queda exactamente UNA sola alerta en la tabla `alertas`**: el incidente del juego **`1328670` entre 21:30 y 21:35 con 68 de 69 partidas en error (98.6%)**."
+
+---
+
+### M.5. ¿Por qué el topic `vidalstore.compras` debe tener obligatoriamente `usuarioSub` como key y qué desastre de cálculo ocurriría en `vidalstore-historial` si la key fuera aleatoria? (D14 Slide 17)
+* **Respuesta Técnica**:
+  > "El evento `licencia.revocada` no incluye el precio de la licencia en su payload; `vidalstore-historial` debe buscar la compra original con el mismo `licenciaId` en su tabla local para descontar el importe del neto de ventas.  
+  > Como el productor utiliza **`key = usuarioSub`**, la función de hash garantiza que **`compra.realizada` y `licencia.revocada` viajen obligatoriamente a la misma partición física**. Dentro de una partición individual, Kafka garantiza orden monotónico estricto; por ende, la compra siempre se procesa antes que la revocación.  
+  > Si la key fuera aleatoria o por juego, caerían en particiones distintas que se consumen en paralelo: la revocación podría leerse antes que la compra, no encontraría el precio para descontar y el total neto (**6.032.190 CLP**) quedaría descuadrado."
+
+---
+
+### M.6. Si levantas cuatro instancias de `vidalstore-eventos`, ¿qué muestra `#PARTITIONS` en `kafka-consumer-groups.sh --describe --members` para `vidalstore-alertas` frente a `vidalstore-panel` y por qué? (Quiz D14.4 · Slides 20 a 22)
+* **Respuesta Técnica**:
+  > "* **En `vidalstore-alertas`**: Lee únicamente `vidalstore.actividad` (3 particiones). Como una partición solo puede ser atendida por un único consumidor del grupo, Kafka asigna una partición a cada una de las 3 primeras instancias y **la cuarta instancia queda completamente ociosa**, mostrando `#PARTITIONS` **1, 1, 1 y 0**. Más instancias que particiones no aceleran el procesamiento, solo esperan.  
+  > * **En `vidalstore-panel`**: Lee dos topics (`vidalstore.actividad` y `vidalstore.compras`), totalizando 6 particiones. Al repartir 6 particiones entre 4 instancias, el asignador entrega `#PARTITIONS` **2, 2, 1 y 1**."
+
+---
+
+### M.7. ¿Cuáles son los pasos estrictos para rebobinar un consumer group a `earliest` y por qué la herramienta falla si el servicio está corriendo? ¿Cómo se repite una demostración ante el profesor en la defensa? (D14 Slides 23 y 24)
+* **Respuesta Técnica**:
+  > "* **Fallo con grupo activo**: Kafka exige que el consumer group esté inactivo para reasignar offsets; si el servicio está corriendo (`Stable`), `kafka-consumer-groups.sh` se niega con el error `Assignments can only be reset if the group ... is inactive, but the current state is Stable`.  
+  > * **Pasos Estrictos de Rebobinado**:  
+  >   1. Detener `vidalstore-eventos` (`docker compose stop eventos`).  
+  >   2. Esperar entre 10 y 30 segundos a que venza la sesión del consumidor.  
+  >   3. Ejecutar `--reset-offsets --to-earliest --execute` y verificar `NEW-OFFSET: 0`.  
+  >   4. Levantar nuevamente `eventos` (`docker compose start eventos`).  
+  >   5. Comprobar que `ventas_semana` se recalcula idempotentemente con los mismos **6.032.190 CLP netos**.  
+  > * **Repetición en la Defensa**: Para repetir una demostración en vivo ante el docente **NO se rebobina**: se vacían las tablas en Postgres con `TRUNCATE` y se reproduce el dataset completo nuevamente con el simulador."
+
+---
+
+### M.8. En nuestro clúster KRaft de 3 brokers con factor 3, `min.insync.replicas=2` y `acks=all`, ¿qué ocurre si se caen 2 brokers y por qué rechazar con `NOT_ENOUGH_REPLICAS` es la decisión correcta? (D14 Slides 26 y 27)
+* **Respuesta Técnica**:
+  > "Al caerse 2 brokers, el conjunto ISR se reduce a 1 réplica. Como $1 < \text{min.insync.replicas}=2$, el broker rechaza la escritura arrojando `NOT_ENOUGH_REPLICAS`.  
+  > Esto es **rigurosamente correcto por diseño**: en un sistema transaccional de compras, **jamás se debe confirmar una transacción que resida en una única copia en disco**, ya que si ese único broker restante sufriera una falla de hardware antes de replicar, los datos de la compra se perderían irrevocablemente junto con el dinero del cliente."
+
+---
+
+### M.9. Al desplegar en la nube, una máquina de AWS intenta descargar una imagen desde GHCR y recibe HTTP `401 Unauthorized`. ¿Cuál es la causa y cómo se corrige? (Quiz D14.5 · Slide 31)
+* **Respuesta Técnica**:
+  > "La causa es que **el paquete en GitHub Container Registry quedó configurado como `Private`**, que es el estado por defecto con el que GitHub crea todo nuevo paquete.  
+  > Se soluciona ingresando a GitHub en el repositorio respectivo $\to$ *Packages* $\to$ *Package settings* $\to$ zona de peligro *Change package visibility* $\to$ seleccionar **`Public`**. Las máquinas en la nube no deben almacenar tokens ni credenciales personales de GitHub."
+
+---
+
+### M.10. En AWS, si el Learner Lab se reinicia y la máquina `nat` queda apagada mientras `mq-1` se enciende, ¿por qué `mq-1` no aparece en Session Manager a pesar de tener el rol IAM asignado? (Quiz D14.6 · Slide 35)
+* **Respuesta Técnica**:
+  > "Porque el rol IAM (`LabInstanceProfile`) solo otorga las autorizaciones a nivel de plano de control de AWS, pero el demonio `amazon-ssm-agent` de la instancia EC2 necesita establecer físicamente una conexión HTTPS de salida hacia los endpoints de AWS Systems Manager en internet.  
+  > Dado que `mq-1` reside en una subred privada sin IP pública, **su único camino a internet es la instancia `nat` (10.0.1.10)**. Si `nat` está detenida, `mq-1` está totalmente incomunicada del exterior y jamás podrá registrarse como `Online` ni descargar paquetes o contenedores."
+
+---
+
+### M.11. En Azure, tras asociar la tabla de rutas `0.0.0.0/0 -> 10.1.1.4` a la subred privada, un `curl https://api.ipify.org` ejecutado dentro de `bff` no responde. ¿Qué dos configuraciones faltan en `gw-azure`? (Quiz D14.7 · Slide 38)
+* **Respuesta Técnica**:
+  > "La tabla de rutas solo transporta los paquetes hasta la tarjeta de red de `gw-azure`. Para que el tráfico salga a internet faltan dos elementos indispensables:  
+  > 1. **IP Forwarding habilitado en la interfaz de red de Azure (`NIC`)** de `gw-azure`, permitiendo que acepte paquetes cuyo destino no es su propia IP.  
+  > 2. **Reglas de NAT / iptables** en el sistema operativo de `gw-azure` (`MASQUERADE` y reglas en la cadena `DOCKER-USER` para no ser bloqueado por el cortafuegos de Docker).  
+  > *(Cuidado crítico: si el script `cloud-init` contenía tildes o caracteres fuera de ASCII, Azure CLI en Windows lo corrompe y cloud-init lo descarta entero en silencio sin configurar iptables)*."
+
+---
+
+### M.12. ¿Cuál es la regla de oro del 30% en la pauta de corrección de la E2 y qué orden exacto sigue el profesor Umbingelelo al corregir el archivo ZIP? (D14 Slides 3 y 39)
+* **Respuesta Técnica**:
+  > "* **La Regla del 30%**: En la E2, 60 puntos corresponden a Kafka (IE5, IE7, IE8) y 40 puntos a ingeniería. Si el script `bash levantar.sh` no logra dejar el sistema levantado y saludable desde un clon limpio, los 60 puntos de Kafka quedan inmediatamente con un **tope máximo del 30% (máximo 18 puntos)**, provocando la reprobación del encargo.  
+  > * **Protocolo de Corrección del Docente**:  
+  >   1. Clona los repositorios listados en `repositorios.md` en el commit SHA exacto de `main` a las 23:59.  
+  >   2. Descomprime la carpeta `envs/` al lado de los clones, dejando cada `.env` en su repositorio.  
+  >   3. Entra a `vidalstore-plataforma` y ejecuta `bash levantar.sh`.  
+  >   4. Revisa `informe.pdf`, `docs/despliegue.md`, el panel en `/panel` y las cifras del dataset."
+
+
 
 
 
