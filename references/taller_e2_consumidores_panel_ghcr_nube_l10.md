@@ -70,10 +70,10 @@ eventos/src/streaming/
 > - **`<grupo>.negocio.ts`**: Recibe un objeto TypeScript ya validado y escribe en Postgres usando `DataSource`. **No importa absolutamente nada de `@platformatic/kafka`**. Si mañana el evento llegara por HTTP o por archivo, `negocio.ts` no cambiaría ni una línea.
 
 ### 2.2 Validación del Sobre (`contrato.ts`) y Clase Base (`consumidor-kafka.ts`)
-- **`EventoInvalido`**: Cuando un mensaje no es JSON válido o incumple el sobre (`eventoId` UUID, `version === 1`, `emitidoEn` ISO válido, `tipo` permitido), el validador lanza `EventoInvalido`.
+- **`EventoInvalido` y soporte de `logro.desbloqueado`**: Cuando un mensaje no es JSON válido o incumple el sobre (`eventoId` UUID, `version === 1`, `emitidoEn` ISO válido, `tipo` permitido), el validador lanza `EventoInvalido`. **Regla crítica para VidalStore (`contrato.ts`)**: el validador **debe aceptar `logro.desbloqueado`** como tipo válido en `vidalstore.actividad` (aunque `panel` u otro consumidor decida no contarlo como inicio/término de partida); tratarlo como inválido reduce los conteos válidos 21:00–21:04 de `24, 27, 48, 34 y 47` a `24, 26, 41, 30 y 43` y en E3 enviaría erróneamente eventos válidos a `vidalstore.actividad.dlt`.
 - **Diferencia entre `EventoInvalido` y caída de Postgres en `ConsumidorKafka<T>`**:
   1. Si `contrato.validar(m.value)` lanza **`EventoInvalido`**: el consumidor registra `WARN [<grupo>] ... INVALIDO (<motivo>)`, **ejecuta `await m.commit()`** y sigue con el siguiente mensaje (un JSON roto jamás se arreglará reintentándolo; en la E2 se registra y confirma, y en la E3 se enviará al `.dlt` antes del commit).
-  2. Si `negocio.procesar(evento)` lanza un **error de base de datos** (ej. Postgres detenido): `procesarHastaEscribir()` **no hace commit**, registra `WARN [<grupo>] ... falló al escribir en la base; reintento en 2s` y reintenta cada 2 segundos hasta que Postgres vuelva.
+  2. Si `negocio.procesar(evento)` lanza un **error de base de datos** (ej. Postgres detenido): **no se hace commit**, se reintenta hasta un **máximo de 3 veces** (Guía §7 de VidalStore; **nunca un bucle infinito sin tope**) antes de ejecutar la acción de fallo documentada (en E3, derivar a `.dlt` o detener según diseño), y el motivo del límite `3` debe quedar **justificado por escrito en `docs/consumer-groups.md`**.
 - **Cierre Limpio en `~1,1 s` (`onModuleDestroy` + `enableShutdownHooks`)**:
   - `main.ts` **debe** invocar `app.enableShutdownHooks()` antes de `app.listen(puerto)`.
   - `onModuleDestroy()` pone `this.deteniendo = true`, cierra el stream (`await this.flujo.close()`) y cierra el consumidor (`await this.consumidor.close()`). Así envía `LeaveGroup` a Kafka y libera sus particiones en ~1 segundo en lugar de congelar el grupo durante los **60 segundos** del `sessionTimeout` por defecto de `@platformatic/kafka`.
@@ -101,7 +101,7 @@ Como Kafka entrega **al menos una vez (*at-least-once*)**, si el proceso escribe
 | Estrategia | Cuándo se usa | Cómo funciona en SQL |
 | :--- | :--- | :--- |
 | **1. Una fila por evento (`kpi_minuto`)** | **`vidalstore-panel`** (`panel.negocio.ts`) | La tabla `kpi_minuto` tiene `evento_id uuid PRIMARY KEY`. Inserta con `INSERT INTO kpi_minuto ... ON CONFLICT (evento_id) DO NOTHING RETURNING evento_id`. Si devuelve `0` filas, el evento ya estaba contado (`'duplicado'`) y se hace commit sin sumar dos veces. Los totales por minuto se calculan al consultar con `GROUP BY` y función de ventana `sum(iniciadas - terminadas) OVER (ORDER BY minuto)::int AS en_curso`. |
-| **2. Contadores + tabla `eventos_procesados` en transacción** | **`vidalstore-alertas`** y **`vidalstore-historial`** | Dentro de `await this.base.transaction(async (tx) => { ... })`: primero ejecuta `INSERT INTO eventos_procesados (grupo, evento_id, procesado_en) VALUES ($1, $2, now()) ON CONFLICT (grupo, evento_id) DO NOTHING RETURNING evento_id`. Si no devuelve fila, corta la transacción y retorna `'duplicado'`. Si devuelve fila, actualiza el contador en la **misma transacción** (ambos cambios se confirman o revierten juntos). La PK es compuesta **`(grupo, evento_id)`** porque un mismo evento lo leen varios grupos independientes. |
+| **2. Contadores + tabla de eventos procesados en transacción** | **`vidalstore-alertas`** y **`vidalstore-historial`** | Dentro de `await this.base.transaction(async (tx) => { ... })`: primero inserta en `eventos_procesados (grupo, evento_id)` **o** en la tabla propia del dominio con `PK (evento_id)` / `UNIQUE(evento_id)` (p. ej. `partidas_terminadas` en alertas y `historial_compras` en historial) con `ON CONFLICT DO NOTHING RETURNING evento_id`. Si no devuelve fila, corta la transacción y retorna `'duplicado'`. Si devuelve fila, actualiza el contador en la **misma transacción** (ambos cambios se confirman o revierten juntos). *(Si usa tabla compartida `eventos_procesados`, su PK debe ser compuesta `(grupo, evento_id)` para no bloquear a otros grupos)*. |
 | **3. Estado actual con guarda temporal (`catalogo`)** | **`vidalstore-catalogo`** *(Grupos de 3)* | `INSERT INTO catalogo_libros ... ON CONFLICT (libro_id) DO UPDATE SET ... WHERE catalogo_libros.emitido_en < EXCLUDED.emitido_en`. Así, al reconstruir desde `offset 0` (mientras el segmento activo aún no ha sido compactado), un evento repetido o más antiguo no pisa un estado más nuevo. |
 
 > [!CAUTION]
@@ -265,17 +265,20 @@ Ambos archivos viven en `vidalstore-plataforma/docs/` y deben contener:
    - Justificación de cada parámetro en una sección por topic:
      - **3 particiones**: permite escalar hasta 3 consumidores por grupo en paralelo y probar en la defensa que un 4.º consumidor queda con `#PARTITIONS = 0` (ocioso).
      - **Replication factor 3 + `min.insync.replicas=2` + `acks=all`**: tolera la caída de 1 broker sin perder escrituras y rechaza con `NOT_ENOUGH_REPLICAS` si caen 2 brokers.
-     - **Key de partición**: `usuarioSub` en `compras` (garantiza que `licencia.revocada` caiga en la misma partición y después de `compra.realizada`, distribuyendo parejo `147 / 141 / 113`); `juegoId` en `actividad` (mantiene juntas las partidas de un mismo juego para las ventanas de 5 min de `alertas`, documentando la partición caliente `P0` con `1.751` eventos [57,6%] por el juego `292030`); `juegoId` en `catalogo` (obligatorio porque la compactación conserva el último valor por key).
+     - **Key de partición (razón Y costo escritos para cada key)**:
+       - `usuarioSub` en `compras`: razón (garantiza que `licencia.revocada` caiga en la misma partición y después de `compra.realizada`) y costo (distribución `147 / 141 / 113` sujeta a concentración por usuario muy activo).
+       - `juegoId` en `actividad`: razón (mantiene juntas las partidas de un mismo juego para las ventanas de 5 min de `alertas` y orden por juego) y **párrafo explícito sobre el costo de la partición caliente**: el juego `292030` deja **`1.751` de `3.039` mensajes en `P0`** frente a **`520` en `P1` y `768` en `P2`**; explicar por qué se acepta ese costo y **qué límite impone al paralelismo** (un solo consumidor del grupo atiende esa partición, así que sumar más instancias no la acelera).
+       - `juegoId` en `catalogo`: obligatorio porque la compactación conserva el último valor por key (y costo de retener compactado sin borrado temporal).
      - **Retención**: `604800000 ms` (7 días) en `compras` y `.dlt`; `86400000 ms` (1 día) en `actividad` y `.dlt`; `cleanup.policy=compact` **sin `retention.ms`** en `catalogo` (si tuviera `retention.ms`, Kafka borraría los juegos cuyo precio no ha cambiado en días).
    - Salida real en bloque ```` ```text ```` de `sh kafka/topics.sh`.
 2. **`docs/consumer-groups.md`**:
    - Tabla de grupos (`vidalstore-panel`, `vidalstore-alertas`, `vidalstore-historial`, y `vidalstore-catalogo` en grupos de 3).
-   - Explicación del **orden del commit** (`autocommit: false`, `await m.commit()` después de escribir en Postgres, reintento cada 2s si cae Postgres).
-   - Explicación de las **formas de idempotencia** (`kpi_minuto` por `evento_id`, transacción con `eventos_procesados (grupo, evento_id)`, y guarda temporal `WHERE emitido_en < EXCLUDED.emitido_en` en `catalogo`).
+   - Explicación del **orden del commit** (`autocommit: false`, `await m.commit()` después de escribir en Postgres) y **justificación escrita del límite de 3 reintentos** cuando Postgres no responde (Guía §7).
+   - Explicación de las **formas de idempotencia**, verificando **coherencia literal 1:1** de cada nombre de tabla, clave `PRIMARY KEY`/`UNIQUE` y función/trigger SQL con las migraciones reales de `vidalstore-eventos` (no dejar nombres de diseños previos que ya no coinciden con el código).
    - Regla y umbral mínimo de `vidalstore-alertas` (por qué `MINIMO = 3` o `5` filtra falsos positivos de 1 sola partida fallida y deja únicamente la caída real del juego `1328670` de `21:30` a `21:35` con `68/69`).
    - Cómo `vidalstore-historial` descuenta revocaciones buscando la compra previa por `licencia_id`.
    - Salidas reales en bloques ```` ```text ```` de:
-     1. `--describe` de los grupos con `LAG 0` después de rebobinar y reconstruir `historial`.
+     1. `--describe` de los grupos con `LAG 0` después de rebobinar y reconstruir `historial`, **y también en la prueba de recuperación de alertas (*«volvió a lag 0»*) en texto plano** (no solo capturas).
      2. `--describe --members` con **3 instancias** y con **4 instancias** (`1, 1, 1 y 0` en `alertas` vs `2, 2, 1 y 1` en `panel`).
 
 ### 4.4 El Catálogo Compactado para Grupos de 3 (`vidalstore.catalogo` y `vidalstore-catalogo`)
@@ -391,7 +394,7 @@ jobs:
             .
           docker push "${IMAGEN}:${GITHUB_SHA}"
 ```
-- **3 Reglas Críticas de GHCR**:
+- **4 Reglas Críticas de GHCR**:
   1. **`${GITHUB_REPOSITORY,,}` en minúsculas**: Docker rechaza nombres de imagen con mayúsculas; `${VAR,,}` en bash convierte el `Owner/Repo` a minúsculas.
   2. **Tag con `${GITHUB_SHA}` (prohibido `:latest`)**: Cada imagen queda atada al commit exacto que la produjo (auditable y reproducible).
   3. **Activar Actions en Forks y poner los 7 paquetes en `Public`**: En un fork nuevo, activar el botón verde en la pestaña **Actions**; y tras el primer push, entrar a `Package settings -> Change visibility -> Public` en los 7 paquetes. Comprobar con:
@@ -399,6 +402,7 @@ jobs:
      docker logout ghcr.io
      docker pull --platform linux/amd64 ghcr.io/<tu-usuario>/vidalstore-eventos:<sha>
      ```
+  4. **Borrar tags `:latest` antiguos y desplegar por `sha`**: Si versiones previas del workflow publicaron `:latest` en `GitHub → Packages`, eliminar esos tags residuales para que cada paquete muestre únicamente tags con `sha` (y `main`), y referenciar siempre las imágenes **por su `sha` de commit** en los `compose` de la nube.
 
 ---
 
@@ -437,7 +441,8 @@ VPC 10.0.0.0/16 (vidalstore-vpc) + Internet Gateway (vidalstore-igw)
 4. **`03-subir.sh` (Artefactos a S3 excluyendo secretos + Secretos a SSM Parameter Store)**:
    - Sube la carpeta `deploy/` a `s3://$BUCKET/deploy` con `--exclude "aws/secretos/*"`.
    - Sube `mq-1.env`, `mq-2.env` y `datos.env` a **AWS Systems Manager Parameter Store** como **`SecureString`** (`/vidalstore/mq-1.env`, `/vidalstore/mq-2.env`, `/vidalstore/datos.env`). En S3 nunca hay contraseñas.
-5. **`en-la-maquina.sh`, `mq/kafka/compose.yml`, `mq/rabbit/secretos.sh` y `04-levantar.sh`**:
+5. **`en-la-maquina.sh`, `mq/kafka/compose.yml`, `mq/rabbit/`, `datos/` y `04-levantar.sh`**:
+   - **Estructura de carpetas solicitada por la pauta**: organizar los compose de AWS en **`deploy/aws/mq/kafka/`**, **`deploy/aws/mq/rabbit/`** y **`deploy/aws/datos/`** (evitando agruparlos bajo `deploy/aws/compose/`), manteniendo alineados `04-archivos.sh` y `docs/red.md`.
    - **Por qué `mq/kafka/compose.yml` usa `network_mode: host`**: En AWS, `controller-N` (`:9093`) y `broker-N` (`:19092`) están en máquinas distintas (`10.0.21.11`, `10.0.22.12`, `10.0.21.13`). Con red bridge de Docker, `controller-1` resolvería `controller-1:9093` a la IP de la EC2 y no a su contenedor. Con `network_mode: host`, ambos escuchan directo en la IP privada de la instancia.
    - **Por qué `mq/rabbit/secretos.sh` escribe `/var/lib/rabbitmq/.erlang.cookie` en vez de usar `RABBITMQ_ERLANG_COOKIE`**: En RabbitMQ 4.3, la imagen oficial deprecó `RABBITMQ_ERLANG_COOKIE`. `secretos.sh` lee `RABBITMQ_COOKIE` del `.env` descargado de Parameter Store, genera `erlang.cookie` **sin salto de línea final (`printf '%s'`)**, con permisos **`chmod 400`** y dueño **`chown 999:999`** (usuario `rabbitmq` dentro del contenedor), y lo monta `:ro`.
    - `04-levantar.sh` levanta Kafka en paralelo en `mq-1..3`, corre `topics.sh` en `mq-1`, levanta RabbitMQ en `mq-1` y luego `mq-2`, aplica políticas en `mq-1`, levanta Postgres 18 en `datos`, levanta Kafka UI en `gestion` y corre el simulador en un contenedor efímero `node:24-slim` poblando los topics reales en AWS.
@@ -462,7 +467,7 @@ VNet 10.1.0.0/16 (vnet-vidalstore)
                                  sale a internet con la IP pública de gw-azure)
 ```
 
-### 7.2 Las 5 Trampas Críticas de Azure y sus Soluciones en `deploy/azure/`
+### 7.2 Las 6 Trampas Críticas de Azure y sus Soluciones en `deploy/azure/`
 1. **Regiones permitidas y cuota de 4 vCPUs (`comun.sh`)**:
    - Azure for Students restringe la creación a 5 regiones por suscripción (consultar policy `Allowed locations`) y da una cuota de **4 vCPUs** por familia `BS` en cada región (`gw-azure` + `bff` usan $2 + 2 = 4\text{ vCPUs}$ exactas).
 2. **`--default-outbound false` obligatorio en la subred `privada` (`red.sh`)**:
@@ -476,6 +481,12 @@ VNet 10.1.0.0/16 (vnet-vidalstore)
 5. **`az vm deallocate` vs `Stop` (`apagar.sh`)**:
    - Apagar desde dentro con `sudo shutdown -h now` o `Stop` deja la VM en `VM stopped` (**sigue cobrando vCPU y RAM por hora**).
    - Es obligatorio usar `bash deploy/azure/apagar.sh` (`az vm deallocate --no-wait`), que libera el hardware físico y deja ambas VMs en **`VM deallocated`** ($0\text{ USD/h}$ de cómputo), conservando la IP pública estática de `gw-azure` para actualizar el puerto 443 de `sg-gw` en AWS (`IP_GW_AZURE="..." bash deploy/aws/01-red.sh`).
+6. **`az vm auto-shutdown` obligatorio en `maquinas.sh` y nombres de scripts (`red.sh` / `maquinas.sh`)**:
+   - Al crear `gw-azure` y `bff` en `deploy/azure/maquinas.sh` (preferir los nombres `red.sh` y `maquinas.sh` o documentar el prefijo numérico en `README.md`), es **obligatorio configurar el apagado automático** tras crear cada VM:
+     ```bash
+     az vm auto-shutdown --resource-group "$GRUPO" --name "$VM" --time <HHMM_UTC>
+     ```
+   - La hora elegida debe quedar **justificada en `docs/red.md`**, el script debe ser **re-ejecutable sin fallar**, y se debe comprobar con `az vm show` (o en la pestaña «Apagado automático» del portal) que ambas máquinas tienen el apagado habilitado. Sin esto, si alguien olvida correr `apagar.sh`, se consume el crédito estudiantil y descuenta puntos en **Redes y datos**.
 
 ---
 
@@ -502,7 +513,7 @@ Todas van en bloques ```` ```text ```` (nunca capturas de pantalla):
   for r in vidalstore-*; do echo "=== $r ==="; git -C "$r" ls-files | grep -E '(^|/)\.env$' || echo "OK: sin .env en Git"; done
   ```
 
-### 8.4 Empaquetado Oficial del Archivo `entrega-e2-grupoNN-seccion.zip` (`EP3-Entrega-2.pdf` pág. 11–13)
+### 8.4 Empaquetado Oficial del Archivo `entrega-e2-grupoNN-seccion.zip`, `informe.pdf` y `README.md` (`EP3-Entrega-2.pdf` pág. 11–13)
 El encargo se entrega como un único archivo `.zip` al AVA con copia por correo a `cr.calderons@profesor.duoc.cl`.
 - **Estructura estricta interna**:
   ```text
@@ -514,6 +525,13 @@ El encargo se entrega como un único archivo `.zip` al AVA con copia por correo 
       ├── vidalstore-eventos/.env
       └── ...
   ```
+- **Reglas estrictas de `repositorios.md` y `envs/`**:
+  - `repositorios.md` sigue exactamente el formato de tabla de la pauta: **sin tabulaciones (`\t`)**, con el nombre real del bucket (jamás `<AccountId>`) y el **commit SHA real de `main` al corte** en cada repositorio.
+  - `envs/` contiene los `.env` reales por repositorio (un repositorio estático que no use `.env`, como `vidalstore-frontend`, no requiere carpeta vacía).
+- **Checklist estricto de `informe.pdf` y ejecución del docente**:
+  - **Diagrama de consumer groups**: cada tabla (`kpi_minuto` PK `(evento_id)`, `alertas`, `partidas_terminadas`, `ventanas_alertas`, `ventas_semana`, `historial_compras`, `catalogo` en lugar de `catalogo_juego`) y sus claves deben coincidir 1:1 con las migraciones de `vidalstore-eventos`.
+  - **Capturas**: cada captura (incluidas las de GHCR y Kafka UI) lleva **su línea explicativa**; AWS muestra **todas** las IPs privadas de las 6 instancias, las rutas de **la tabla pública y privada**, y la pestaña **Inbound rules** de cada Security Group; Azure muestra la subred privada con `--default-outbound false`; Kafka UI muestra la barra de direcciones del túnel (`localhost:18085`) y el **detalle por partición** (`1751 · 520 · 768`); las capturas de consola son reales (sin recortar `HOST`) y `/panel` está tomado del **`main` final** (URL `/panel`, hora `America/Santiago`, máximo `480` a las `21:46`).
+  - **Ejecución limpia y seguridad operativa**: documentar en `vidalstore-plataforma/README.md` cómo obtener o autenticar un usuario administrador de Cognito para probar `/v1/panel/en-vivo` con `200 OK`; incluir `healthcheck` en `kafka-ui` en `compose.yml`; y **nunca imprimir URLs con contraseñas en logs** (ej. URL de RabbitMQ en `vidalstore-catalogo`).
 - **Script oficial recomendado `scripts/generar-entrega2.sh`**:
   Automatiza la recolección de variables `.env` reales, la extracción de los SHAs de `main` en cada repositorio para `repositorios.md`, y el empaquetado del `.zip` asegurando compatibilidad multiplataforma (usando `zip -r` en Linux/macOS y `/c/Windows/System32/tar.exe -a -c -f` en Git Bash/Windows).
 

@@ -34,22 +34,23 @@ La EP3 adopta un **ciclo semanal estricto**, erradicando los commits de última 
 | :--- | :--- | :--- | :--- |
 | **E1** | **Viernes 6 de noviembre (23:59)** | Clúster Compose KRaft con 3 controllers y 3 brokers; topics creados desde `kafka/topics.sh`; productor de `compras`; simulador publicando; 1 consumidor. | Clon limpio operativo (`start-all.sh`); higiene de Git en todos los repos; cuentas activas en AWS y Azure; diagrama de arquitectura de red en `docs/red.md`. |
 | **E2** | **Viernes 13 de noviembre (23:59)** | Tres consumer groups independientes; commit manual de offsets (`offset + 1`); retención justificada; panel de observabilidad en vivo (Prometheus, Grafana y carga). | Imágenes construidas y publicadas en GHCR (GitHub Container Registry); VPC y subredes en AWS con capa de datos operativa. *(Verificación en vivo en laboratorio L12 del lunes 16)*. |
-| **E3** | **Viernes 20 de noviembre (23:59)** | Resiliencia con Dead Letter Topics (`.dlt`); administración completa de Kafka vía HTTP en `vidalstore-admin`. | Microservicios y API Gateways desplegados en las dos nubes (AWS y Azure); pipeline de despliegue continuo (CI/CD) funcional. |
+| **E3** | **Viernes 20 de noviembre (23:59)** | Resiliencia con Dead Letter Topics (`.dlt` publicados por aplicación con `x-motivo`, `x-grupo` y tope de 3 reintentos); administración completa de Kafka vía HTTP en `vidalstore-admin` (7 rutas en `/v1/admin/kafka`). | `servicios` y `gw-aws` con Caddy+`sslip.io` en AWS; `frontend`+Caddy y `gateway` en `gw-azure` + `bff` en Azure con Cognito HTTPS; `vidalstore-plataforma` privado, `deploy/versiones.env` y despliegue continuo (`desplegar.yml`) con self-hosted runners en `gestion` y `bff`. |
 | **Defensas** | **Semana 16 (23 al 27 de noviembre)** | **Defensa Individual Oficial**: Demostración de flujos de streaming, operación en vivo en la nube e inspección del historial atómico de Git. |
 
 ---
 
 ## 3. Catálogo Oficial de Topics de VidalStore
 
-En VidalStore los topics no se crean con nombres libres ni de forma dinámica en tiempo de ejecución. La topología oficial se declara en `kafka/topics.sh`:
+En VidalStore los topics no se crean con nombres libres ni de forma dinámica en tiempo de ejecución. La topología oficial se declara en `kafka/topics.sh` (y `deploy/aws/mq/kafka/topics.sh`):
 
 | Topic | Particiones | Réplicas | Retención / Política | Propósito en VidalStore |
 | :--- | :---: | :---: | :--- | :--- |
 | **`vidalstore.compras`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=604800000` (7 días) | Publicación de eventos `compra.realizada` y `licencia.revocada` (`key = usuarioSub`, `401` eventos en el dataset: `P0=147, P1=141, P2=113`). Emite el microservicio de licencias tras guardar en PostgreSQL. |
-| **`vidalstore.actividad`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=86400000` (1 día) | Telemetría de partidas (`partida.iniciada`, `partida.terminada`) y búsquedas (`key = juegoId`, `3.039` eventos en el dataset; partición caliente `P0=1.751 [57,6%]` por el juego `292030`, `P1=520`, `P2=768`). |
-| **`vidalstore.compras.dlt`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=604800000` (7 días) | Dead Letter Topic para eventos de compra malformados o no procesables tras agotar reintentos. |
-| **`vidalstore.actividad.dlt`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=86400000` (1 día) | Dead Letter Topic para telemetría venenosa. |
+| **`vidalstore.actividad`** | 3 | 3 | `min.insync.replicas=2`<br>`retention.ms=86400000` (1 día) | Telemetría de partidas (`partida.iniciada`, `partida.terminada`, `logro.desbloqueado`) (`key = juegoId`, `3.039` eventos en el dataset; partición caliente `P0=1.751 [57,6%]` por el juego `292030`, `P1=520`, `P2=768`). |
+| **`vidalstore.compras.dlt`** | 3 | 3 | `min.insync.replicas=2`<br>`cleanup.policy=delete`<br>`retention.ms=604800000` (7 días) | Dead Letter Topic para eventos de compra inválidos (`4` × `2` grupos = **`8` mensajes** con el dataset) o tras agotar 3 reintentos si Postgres cae. |
+| **`vidalstore.actividad.dlt`** | 3 | 3 | `min.insync.replicas=2`<br>`cleanup.policy=delete`<br>`retention.ms=604800000` (7 días) | Dead Letter Topic para telemetría inválida (`30` × `2` grupos = **`60` mensajes** con el dataset) o tras agotar 3 reintentos si Postgres cae. Retiene 7 días para revisar y reprocesar. |
 | **`vidalstore.catalogo`** *(Requisito Grupos de 3)* | 3 | 3 | `min.insync.replicas=2`<br>`cleanup.policy=compact`<br>*(SIN `retention.ms`)* | Registro compactado del estado actual de los juegos (`juego.publicado`, `precio.cambiado` / `juego.actualizado`). La clave es `juegoId`; Kafka conserva el último valor de cada clave. No lleva `retention.ms` para que juegos sin cambios de precio no se borren por antigüedad. |
+| **`vidalstore.catalogo.dlt`** *(Requisito Grupos de 3 en E3)* | 3 | 3 | `min.insync.replicas=2`<br>`cleanup.policy=delete`<br>`retention.ms=604800000` (7 días) | Dead Letter Topic para `vidalstore-catalogo` (con `auto.create.topics.enable=false`, todo topic consumido por `ConsumidorKafka` requiere su `.dlt`). Lleva `delete` porque guarda cada fallo individual, no el último estado por clave. |
 
 ---
 
@@ -119,14 +120,18 @@ A partir de la corrección oficial de la Entrega 1 (E1) por parte del docente, s
    - Mantener el script en `main` exactamente en la ruta prometida en el `README.md`.
    - Cero comandos `kill -9` o `kill -15` escaneando puertos del host y cero `docker rm -f` de contenedores ajenos. La limpieza debe circunscribirse al compose (`docker compose down`).
    - El script debe resolver su directorio dinámicamente para ejecutarse tanto desde la raíz del proyecto como desde `vidalstore-plataforma`.
-5. **Higiene de Pull Requests y Prohibición de Automerge (Git)**:
-   - Todo avance debe entrar por PR con ramas `feature/*`.
-   - Los PRs deben ser revisados y aprobados por **otro compañero** de equipo. El automerge (abrir y mergear uno mismo) invalida la revisión.
+5. **Higiene de Pull Requests, Protección de `main` y Prohibición de Automerge (Git)**:
+   - Todo avance (incluidos `hotfix:` urgentes) debe entrar por PR desde ramas `feature/*`, tanto hacia `dev` como hacia `main`. Queda prohibido el push directo a `main` y reescribir historial (`push --force`); activar Branch Protection en GitHub (`Settings → Branches`).
+   - Los PRs deben ser revisados, con **al menos un comentario o aprobación escrita (`review`)**, y mergeados por **otro compañero** de equipo. El automerge (abrir y mergear uno mismo) invalida la revisión, y los merges exprés (< 2 min) sin revisión escrita restan respaldo.
    - Si un integrante no registra PRs propios durante el ciclo, todo el grupo es penalizado con una bajada de nivel en Git (de 60% a 30%).
 6. **Verificaciones Multi-Cloud para E2 y E3 (Nubes)**:
-   - En Azure: incluir la salida de `az vm list-skus` en `region.txt` para validar la existencia y cuota de `Standard_B2ats_v2` y `Standard_B2als_v2`.
-   - En AWS: asegurar que los scripts de prueba no dependan de dry-run casero y validar el rol asignado.
+   - En Azure: incluir la salida de `az vm list-skus` en `region.txt` para validar la existencia y cuota de `Standard_B2ats_v2` y `Standard_B2als_v2`, configurar **`az vm auto-shutdown`** en `maquinas.sh` para `gw-azure` y `bff` (justificando la hora en `docs/red.md`), y preferir nombres `red.sh` y `maquinas.sh` (o documentar prefijo numérico en `README.md`).
+   - En AWS: organizar compose bajo `deploy/aws/mq/kafka/`, `mq/rabbit/` y `datos/`, asegurar que los scripts sean re-ejecutables y validar el rol asignado.
    - En `docs/red.md`: eliminar cualquier placeholder `<...>` residual del template de red.
+7. **Lecciones de Retroalimentación de la Entrega 2 hacia la E3**:
+   - **Costo de partición caliente en `docs/topics.md`**: Documentar razón y costo de cada key (`usuarioSub`, `juegoId`), detallando en `vidalstore.actividad` que `292030` deja `1.751` de `3.039` mensajes en `P0` (`520` y `768` en las otras), por qué se acepta (orden por juego) y qué límite impone al paralelismo (1 consumidor por partición).
+   - **Resiliencia en `vidalstore-eventos`**: Aceptar `logro.desbloqueado` en `contrato.ts` (evita bajar conteos 21:00–21:04 a `24, 26, 41, 30, 43` y evita falsos envíos a `.dlt` en E3) y limitar reintentos ante caída de Postgres a **3 veces** (Guía §7), justificando el límite en `docs/consumer-groups.md`.
+   - **Paridad Docs $\leftrightarrow$ Código y Entregables**: Cada tabla, clave y función en `docs/consumer-groups.md` e `informe.pdf` debe coincidir 1:1 con las migraciones; incluir recuperación de alertas en texto (`--describe`), eliminar tags `:latest` antiguos en GHCR, desplegar por `sha`, documentar en `README.md` cómo obtener un token/usuario de Cognito, poner `healthcheck` en `kafka-ui`, y nunca imprimir URLs con contraseñas en logs de servicios.
 
 ---
 
@@ -141,8 +146,9 @@ Al procesar los `3.039` eventos de `vidalstore.actividad` y los `401` eventos de
    - Con umbral mínimo de partidas terminadas (`MINIMO = 3` o `5`) y más de `20%` de error en ventanas fijas de 5 minutos UTC: dispara **1 sola alerta** correspondiente al **juego `1328670`** (*Mass Effect Legendary Edition*) en la ventana **`21:30` a `21:35` UTC** con **`68` errores de `69` terminadas (`98,6%`)**.
 3. **`vidalstore-historial` (`ventas_semana` + `compras_vistas`)**:
    - **`380` compras**, **`15` revocaciones** y **`6.032.190 CLP` netos** (descontando en la semana original el precio pagado de la compra asociada al mismo `licenciaId`).
-4. **Guías detalladas de la Semana 13 y Entrega 2**:
+4. **Guías detalladas de la Semana 13, E2 y E3**:
    - [Escalamiento, Replicación, Diagnóstico y Consumer Lag (D13 y Lab A13)](./escalamiento_replicacion_y_lag_d13_a13.md)
    - [Taller de la E2: Consumer Groups, Panel en Vivo, GHCR y Despliegue en AWS/Azure (L10)](./taller_e2_consumidores_panel_ghcr_nube_l10.md)
+   - [Taller de la E3: Resiliencia `.dlt`, Administrador de Kafka, Dos Nubes con HTTPS y GitOps (L12A, L12 y E3)](./taller_e3_dlt_admin_nubes_gitops_l12.md)
 
 

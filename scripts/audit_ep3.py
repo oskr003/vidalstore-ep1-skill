@@ -329,6 +329,27 @@ def audit_e2_streaming_y_panel(root_dir):
                 log_pass(f"Las {len(negocio_files)} clases *.negocio.ts están desacopladas de Kafka (IE5).")
         else:
             log_warn("[vidalstore-eventos] Aún no se detectan archivos *.negocio.ts en src/streaming/.")
+
+        # Verificar contrato.ts (logro.desbloqueado aceptado en panel) y consumidor-kafka.ts (tope 3 reintentos)
+        contrato_path = os.path.join(streaming_dir, "contrato.ts")
+        if os.path.isfile(contrato_path):
+            with open(contrato_path, "r", encoding="utf-8", errors="ignore") as fh:
+                contrato_code = fh.read()
+            m_panel = re.search(r"TIPOS_PANEL_PERMITIDOS\b.*?;", contrato_code, re.DOTALL)
+            if m_panel:
+                if "logro.desbloqueado" in m_panel.group(0):
+                    log_pass("[vidalstore-eventos/contrato.ts] TIPOS_PANEL_PERMITIDOS acepta 'logro.desbloqueado' (evita desvío erróneo a .dlt).")
+                else:
+                    log_warn("[vidalstore-eventos/contrato.ts] TIPOS_PANEL_PERMITIDOS descarta 'logro.desbloqueado' (baja actividad 21:00-21:04 a 24,26,41,30,43 y en E3 caería en .dlt).")
+
+        consumidor_base_path = os.path.join(streaming_dir, "consumidor-kafka.ts")
+        if os.path.isfile(consumidor_base_path):
+            with open(consumidor_base_path, "r", encoding="utf-8", errors="ignore") as fh:
+                cons_code = fh.read()
+            if re.search(r"while\s*\(\s*!this\.deteniendo\s*\)|while\s*\(\s*true\s*\)", cons_code) and not re.search(r"MAX_?REINTENTOS|reintento\w*\s*[<=>]+\s*3|intento\w*\s*[<=>]+\s*3", cons_code, re.IGNORECASE):
+                log_warn("[vidalstore-eventos/consumidor-kafka.ts] Reintentos ante error de Postgres sin límite aparente de 3 (Guía §7 exige máximo 3 reintentos y justificarlo en docs/consumer-groups.md).")
+            else:
+                log_pass("[vidalstore-eventos/consumidor-kafka.ts] Manejo de reintentos acotado.")
     else:
         log_warn("[vidalstore-eventos] Directorio src/streaming/ aún no creado para E2.")
 
@@ -351,9 +372,23 @@ def audit_e2_streaming_y_panel(root_dir):
         doc_path = os.path.join(root_dir, "vidalstore-plataforma", "docs", doc_name)
         if os.path.isfile(doc_path):
             log_pass(f"[vidalstore-plataforma/docs/{doc_name}] Documento obligatorio de E2 presente.")
-            if doc_name == "despliegue.md":
-                with open(doc_path, "r", encoding="utf-8", errors="ignore") as dfh:
-                    dcontent = dfh.read()
+            with open(doc_path, "r", encoding="utf-8", errors="ignore") as dfh:
+                dcontent = dfh.read()
+            if doc_name == "topics.md":
+                if "292030" in dcontent and ("1751" in dcontent or "1.751" in dcontent) and ("520" in dcontent and "768" in dcontent):
+                    log_pass("[docs/topics.md] Justifica partición caliente de juegoId (292030 con 1.751 / 520 / 768).")
+                else:
+                    log_warn("[docs/topics.md] Falta justificar explícitamente el costo de la partición caliente de juegoId (juego 292030: 1.751 vs 520 y 768, y límite de paralelismo).")
+            elif doc_name == "consumer-groups.md":
+                if "LAG" in dcontent and "--describe" in dcontent:
+                    log_pass("[docs/consumer-groups.md] Incluye salidas en texto de --describe.")
+                else:
+                    log_warn("[docs/consumer-groups.md] Verificar salidas en texto de --describe (incluyendo recuperación a lag 0).")
+                if re.search(r"reintent\w*.*3|3\s+reintent", dcontent, re.IGNORECASE):
+                    log_pass("[docs/consumer-groups.md] Documenta el límite de 3 reintentos en Postgres.")
+                else:
+                    log_warn("[docs/consumer-groups.md] Falta justificar por escrito el límite de 3 reintentos ante fallo de Postgres (Guía §7).")
+            elif doc_name == "despliegue.md":
                 # Verificar presencia de los 8 comandos requeridos por EP3 Entrega 2 pág. 9
                 cmds_despliegue = [
                     ("describe-instances", "Comando #1 AWS (IPs privadas)"),
@@ -373,15 +408,29 @@ def audit_e2_streaming_y_panel(root_dir):
         else:
             log_warn(f"[vidalstore-plataforma/docs/{doc_name}] Aún no existe (obligatorio para E2).")
 
-    # Verificar repositorios.md (formato inalterable para script docente)
-    repomd_path = os.path.join(root_dir, "vidalstore-plataforma", "docs", "repositorios.md")
-    if os.path.isfile(repomd_path):
-        with open(repomd_path, "r", encoding="utf-8", errors="ignore") as rfh:
-            rcontent = rfh.read()
-        if "SHA de main al entregar" in rcontent and "Comando: `bash levantar.sh`" in rcontent:
-            log_pass("[vidalstore-plataforma/docs/repositorios.md] Formato normativo de E2 cumplido (script de corrección docente).")
-        else:
-            log_warn("[vidalstore-plataforma/docs/repositorios.md] Verificar cabeceras y tabla | Repositorio | URL | SHA de main al entregar | (EP3 E2 pág. 12).")
+    # Verificar repositorios.md (formato inalterable para script docente, sin tabs ni placeholders)
+    repo_md_candidatos = [
+        os.path.join(root_dir, "repositorios.md"),
+        os.path.join(root_dir, "vidalstore-plataforma", "docs", "repositorios.md"),
+    ]
+    for repomd_path in repo_md_candidatos:
+        if os.path.isfile(repomd_path):
+            rel = os.path.relpath(repomd_path, root_dir)
+            with open(repomd_path, "r", encoding="utf-8", errors="ignore") as rfh:
+                rcontent = rfh.read()
+            if "\t" in rcontent:
+                log_warn(f"[{rel}] Contiene tabulaciones (\\t); usar espacios limpios según formato fijo.")
+            else:
+                log_pass(f"[{rel}] Sin tabulaciones.")
+            placeholders_repo = re.findall(r"<[A-Za-z0-9_-]+>", rcontent)
+            if placeholders_repo:
+                log_warn(f"[{rel}] Conserva placeholders sin completar: {set(placeholders_repo)}.")
+            else:
+                log_pass(f"[{rel}] Sin placeholders sin completar.")
+            if "SHA de main al entregar" in rcontent and "Comando: `bash levantar.sh`" in rcontent:
+                log_pass(f"[{rel}] Formato normativo cumplido (script de corrección docente).")
+            else:
+                log_warn(f"[{rel}] Verificar cabeceras y tabla | Repositorio | URL | SHA de main al entregar | (EP3 E2 pág. 12).")
 
 
 def audit_e2_ghcr_y_nube_l10(root_dir):
@@ -409,9 +458,71 @@ def audit_e2_ghcr_y_nube_l10(root_dir):
             elif "GITHUB_SHA" in wf_text or "github.sha" in wf_text:
                 log_pass(f"[{repo}] Workflow .github/workflows/imagen.yml etiqueta con SHA del commit.")
 
-    # Verificar ASCII puro en cloud-init de Azure (trampa silenciosa L10 §6.3)
-    azure_dir = os.path.join(root_dir, "vidalstore-plataforma", "deploy", "azure")
+        # Verificar que no se impriman credenciales/URLs sensibles en logs de arranque
+        src_dir = os.path.join(repo_dir, "src")
+        if os.path.isdir(src_dir):
+            for r, _, files in os.walk(src_dir):
+                for fname in files:
+                    if fname.endswith(".ts"):
+                        fpath = os.path.join(r, fname)
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as sfh:
+                            src_text = sfh.read()
+                        for m_log in re.finditer(r"(?:logger|log|console)\.(?:log|warn|error|debug)\s*\([^;)]*(?:\$\{[^}]*(?:rabbitmqUrl|databaseUrl|RABBITMQ_URL|DATABASE_URL|amqpUrl|postgresUrl)[^}]*\}|(?:amqp|postgres(?:ql)?):\/\/)[^;)]*\)", src_text, re.IGNORECASE | re.DOTALL):
+                            linea_aprox = src_text[:m_log.start()].count("\n") + 1
+                            log_warn(f"[{repo}/src/.../{fname}:{linea_aprox}] Posible log de URL con contraseña en claro (enmascarar credenciales).")
+
+    # Verificar healthcheck de kafka-ui y README de plataforma (usuario Cognito)
+    plat_dir = os.path.join(root_dir, "vidalstore-plataforma")
+    for cname in ["docker-compose.yml", "compose.yml"]:
+        cpath = os.path.join(plat_dir, cname)
+        if os.path.isfile(cpath):
+            with open(cpath, "r", encoding="utf-8", errors="ignore") as cfh:
+                ctext = cfh.read()
+            m_kui = re.search(r"^\s*kafka-ui:\s*\n(.*?)(?=^\s{2}[a-zA-Z0-9_-]+:\s*$|\Z)", ctext, re.MULTILINE | re.DOTALL)
+            if m_kui:
+                if "healthcheck:" in m_kui.group(0):
+                    log_pass(f"[vidalstore-plataforma/{cname}] kafka-ui define healthcheck.")
+                else:
+                    log_warn(f"[vidalstore-plataforma/{cname}] kafka-ui no tiene healthcheck en compose.")
+            break
+
+    plat_readme = os.path.join(plat_dir, "README.md")
+    if os.path.isfile(plat_readme):
+        with open(plat_readme, "r", encoding="utf-8", errors="ignore") as rfh:
+            readme_txt = rfh.read()
+        if "panel/en-vivo" in readme_txt and re.search(r"usuario|login|hosted ui|token", readme_txt, re.IGNORECASE):
+            log_pass("[vidalstore-plataforma/README.md] Documenta cómo obtener usuario/token de Cognito para probar /v1/panel/en-vivo.")
+        else:
+            log_warn("[vidalstore-plataforma/README.md] Falta explicar cómo obtener un usuario/token de Cognito para probar /v1/panel/en-vivo.")
+
+    # Verificar estructura AWS (mq/kafka, mq/rabbit, datos vs compose/)
+    aws_dir = os.path.join(plat_dir, "deploy", "aws")
+    if os.path.isdir(aws_dir):
+        if os.path.isdir(os.path.join(aws_dir, "mq", "kafka")) and os.path.isdir(os.path.join(aws_dir, "mq", "rabbit")) and os.path.isdir(os.path.join(aws_dir, "datos")):
+            log_pass("[deploy/aws/] Usa la estructura de carpetas solicitada (mq/kafka/, mq/rabbit/ y datos/).")
+        elif os.path.isdir(os.path.join(aws_dir, "compose")):
+            log_warn("[deploy/aws/] Usa deploy/aws/compose/ en lugar de deploy/aws/mq/kafka/, mq/rabbit/ y datos/ pedidos por la pauta.")
+
+    # Verificar ASCII puro en cloud-init, auto-shutdown y nombres en Azure
+    azure_dir = os.path.join(plat_dir, "deploy", "azure")
     if os.path.isdir(azure_dir):
+        maquinas_path = None
+        for candidate in ["maquinas.sh", "02-maquinas.sh"]:
+            p = os.path.join(azure_dir, candidate)
+            if os.path.isfile(p):
+                maquinas_path = p
+                break
+        if maquinas_path:
+            with open(maquinas_path, "r", encoding="utf-8", errors="ignore") as mfh:
+                m_text = mfh.read()
+            rel_m = os.path.relpath(maquinas_path, root_dir)
+            if "auto-shutdown" in m_text:
+                log_pass(f"[{rel_m}] Configura 'az vm auto-shutdown' para evitar consumo accidental de créditos.")
+            else:
+                log_fail(f"[{rel_m}] Falta 'az vm auto-shutdown' para gw-azure y bff (causa descuento en Redes y datos).")
+        if os.path.isfile(os.path.join(azure_dir, "01-red.sh")) and not os.path.isfile(os.path.join(azure_dir, "red.sh")):
+            log_warn("[deploy/azure/] Scripts usan prefijo numérico (01-red.sh / 02-maquinas.sh) en lugar de red.sh / maquinas.sh; renombrar o justificar en README.md.")
+
         for fname in os.listdir(azure_dir):
             if fname.startswith("cloud-init") and fname.endswith(".yaml"):
                 fpath = os.path.join(azure_dir, fname)
@@ -430,6 +541,196 @@ def audit_e2_ghcr_y_nube_l10(root_dir):
                         log_warn("[deploy/azure/cloud-init-gw-azure.yaml] Falta regla iptables DOCKER-USER (Docker bloqueará el tráfico NAT de bff).")
 
 
+def audit_e3_dlt_admin_nubes_gitops(root_dir):
+    print(f"\n{C_BOLD}[9/9] Verificando entregables y reglas críticas de E3 / L12 (.dlt, Admin Kafka, 2 Nubes, GitOps)...{C_RESET}")
+    plat_dir = os.path.join(root_dir, "vidalstore-plataforma")
+    eventos_dir = os.path.join(root_dir, "vidalstore-eventos")
+    admin_dir = os.path.join(root_dir, "vidalstore-admin")
+    front_dir = os.path.join(root_dir, "vidalstore-frontend")
+
+    # 1. Prohibición de nombres residuales del dominio Biblioteca en código VidalStore (EP3-Guia §4)
+    residuales_bib = []
+    for repo in REPOS:
+        repo_dir = os.path.join(root_dir, repo)
+        for sub in ["src", "kafka", "deploy"]:
+            sub_dir = os.path.join(repo_dir, sub)
+            if not os.path.isdir(sub_dir):
+                continue
+            for r, _, files in os.walk(sub_dir):
+                for fname in files:
+                    if not fname.endswith((".ts", ".sh", ".yml", ".yaml")):
+                        continue
+                    fpath = os.path.join(r, fname)
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as fh:
+                        txt = fh.read()
+                    # Ignorar referencias históricas legítimas de biblioteca-web/biblioteca-eventos en comentarios de L6/EP2 si no son topics/roles activos
+                    if re.search(r"['\"`]biblioteca\.(?:prestamos|lecturas|catalogo)['\"`]|@Roles\(['\"`]bibliotecarios['\"`]\)|PREFIJO_PROTEGIDO\s*=\s*['\"`]biblioteca\.", txt):
+                        residuales_bib.append(os.path.relpath(fpath, root_dir))
+    if residuales_bib:
+        log_fail(f"Nombres residuales del dominio 'biblioteca' detectados en VidalStore: {residuales_bib}")
+    else:
+        log_pass("Sin nombres residuales del dominio 'biblioteca.*' / 'bibliotecarios' en código VidalStore.")
+
+    # 2. IE6: vidalstore.catalogo.dlt, dlt.ts, x-motivo/x-grupo, pruebas contrato.spec.ts
+    for rel_topics in ["kafka/topics.sh", "deploy/aws/mq/kafka/topics.sh", "deploy/aws/compose/topics.sh"]:
+        tpath = os.path.join(plat_dir, rel_topics)
+        if os.path.isfile(tpath):
+            with open(tpath, "r", encoding="utf-8", errors="ignore") as fh:
+                tcode = fh.read()
+            if "vidalstore.catalogo.dlt" in tcode:
+                log_pass(f"[{rel_topics}] Declara vidalstore.catalogo.dlt (E3 paso 1).")
+            else:
+                log_warn(f"[{rel_topics}] Falta vidalstore.catalogo.dlt (obligatorio en E3 con auto.create.topics.enable=false).")
+
+    dlt_path = os.path.join(eventos_dir, "src", "streaming", "dlt.ts")
+    if os.path.isfile(dlt_path):
+        with open(dlt_path, "r", encoding="utf-8", errors="ignore") as fh:
+            dlt_code = fh.read()
+        if "x-motivo" in dlt_code and "x-grupo" in dlt_code:
+            log_pass("[vidalstore-eventos/src/streaming/dlt.ts] PublicadorDlt agrega headers x-motivo y x-grupo.")
+        else:
+            log_fail("[vidalstore-eventos/src/streaming/dlt.ts] Faltan headers obligatorios x-motivo o x-grupo en cabecerasDlt.")
+    else:
+        log_warn("[vidalstore-eventos] Falta src/streaming/dlt.ts (E3 Tramo 1 / IE6).")
+
+    contrato_path = os.path.join(eventos_dir, "src", "streaming", "contrato.ts")
+    if os.path.isfile(contrato_path):
+        with open(contrato_path, "r", encoding="utf-8", errors="ignore") as fh:
+            ccode = fh.read()
+        if "MotivoInvalido" in ccode and "json-invalido" in ccode and "version-desconocida" in ccode:
+            log_pass("[vidalstore-eventos/contrato.ts] Clasifica MotivoInvalido (json-invalido, falta-*, version-desconocida, dto-invalido).")
+        else:
+            log_warn("[vidalstore-eventos/contrato.ts] Aún no clasifica MotivoInvalido para el header x-motivo de E3.")
+
+    spec_path = os.path.join(eventos_dir, "src", "streaming", "contrato.spec.ts")
+    if os.path.isfile(spec_path):
+        log_pass("[vidalstore-eventos] Prueba unitaria src/streaming/contrato.spec.ts presente.")
+    else:
+        log_warn("[vidalstore-eventos] Falta src/streaming/contrato.spec.ts (necesario para job pruebas de E3).")
+
+    # 3. IE3 / IE9: vidalstore-admin KafkaAdminService + KafkaController sin importar Kafka
+    admin_kafka_dir = os.path.join(admin_dir, "src", "kafka")
+    if os.path.isdir(admin_kafka_dir):
+        ctrl_path = os.path.join(admin_kafka_dir, "kafka.controller.ts")
+        svc_path = os.path.join(admin_kafka_dir, "kafka-admin.service.ts")
+        if os.path.isfile(ctrl_path):
+            with open(ctrl_path, "r", encoding="utf-8", errors="ignore") as fh:
+                ctrl_txt = fh.read()
+            if "@platformatic/kafka" in ctrl_txt:
+                log_fail("[vidalstore-admin/kafka.controller.ts] Controlador importa @platformatic/kafka directamente (viola IE3/IE9).")
+            else:
+                log_pass("[vidalstore-admin/kafka.controller.ts] Controlador desacoplado del cliente de Kafka.")
+            if "administradores" in ctrl_txt:
+                log_pass("[vidalstore-admin/kafka.controller.ts] Protege rutas con @Roles('administradores').")
+            else:
+                log_warn("[vidalstore-admin/kafka.controller.ts] Verificar @Roles('administradores') en KafkaController.")
+        else:
+            log_warn("[vidalstore-admin/src/kafka/] Falta kafka.controller.ts.")
+        if os.path.isfile(svc_path):
+            with open(svc_path, "r", encoding="utf-8", errors="ignore") as fh:
+                svc_txt = fh.read()
+            if "vidalstore." in svc_txt and "confirmar" in svc_txt:
+                log_pass("[vidalstore-admin/kafka-admin.service.ts] Protege borrado de vidalstore.* con parámetro de confirmación.")
+            else:
+                log_warn("[vidalstore-admin/kafka-admin.service.ts] Verificar protección de borrado para prefijo 'vidalstore.' con ?confirmar=.")
+        else:
+            log_warn("[vidalstore-admin/src/kafka/] Falta kafka-admin.service.ts.")
+    else:
+        log_warn("[vidalstore-admin] Falta módulo src/kafka/ con las 7 rutas de /v1/admin/kafka (E3 Tramo 2).")
+
+    # 4. AWS y Azure completos E3 (servicios, gw-aws, Caddy, desplegar.sh con --exact-timestamps, frontend Caddy)
+    aws_deploy_dir = os.path.join(plat_dir, "deploy", "aws")
+    e3_aws_cd_found = False
+    if os.path.isdir(aws_deploy_dir):
+        for fname in os.listdir(aws_deploy_dir):
+            if not fname.endswith(".sh"):
+                continue
+            fpath = os.path.join(aws_deploy_dir, fname)
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as fh:
+                ad_txt = fh.read()
+            if "versiones.env" in ad_txt or ("ssm send-command" in ad_txt and "docker compose" in ad_txt):
+                e3_aws_cd_found = True
+                if "--exact-timestamps" in ad_txt:
+                    log_pass(f"[deploy/aws/{fname}] Usa --exact-timestamps en aws s3 sync (evita caché de versiones.env de igual tamaño).")
+                else:
+                    log_fail(f"[deploy/aws/{fname}] Falta --exact-timestamps en aws s3 sync (deploy/versiones.env con nuevo SHA no se descargará).")
+    if not e3_aws_cd_found:
+        log_warn("[deploy/aws/] Aún no hay script de despliegue continuo E3 con versiones.env + aws ssm send-command + --exact-timestamps.")
+
+    for rel_e3 in ["deploy/aws/servicios/compose.yml", "deploy/aws/gw-aws/compose.yml", "deploy/aws/gw-aws/Caddyfile", "deploy/azure/gw-azure/compose.yml", "deploy/azure/bff/compose.yml", "deploy/azure/humo.sh"]:
+        if os.path.isfile(os.path.join(plat_dir, rel_e3)):
+            log_pass(f"[vidalstore-plataforma/{rel_e3}] Archivo E3 presente.")
+        else:
+            log_warn(f"[vidalstore-plataforma/{rel_e3}] Falta para despliegue completo E3.")
+
+    az_deploy_dir = os.path.join(plat_dir, "deploy", "azure")
+    e3_az_cd_found = False
+    if os.path.isdir(az_deploy_dir):
+        for fname in os.listdir(az_deploy_dir):
+            if not fname.endswith(".sh"):
+                continue
+            fpath = os.path.join(az_deploy_dir, fname)
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as fh:
+                azd_txt = fh.read()
+            if "versiones.env" in azd_txt and "docker compose" in azd_txt:
+                e3_az_cd_found = True
+                if re.search(r'cd\s+"\$\(dirname\s+"\$0"\)/\.\."(?!/)', azd_txt):
+                    log_pass(f"[deploy/azure/{fname}] Se posiciona en deploy/ para leer versiones.env.")
+                elif "/../.." in azd_txt:
+                    log_fail(f"[deploy/azure/{fname}] Hace cd a raíz (/../..) en vez de deploy/ (/..); fallará con couldn't find env file.")
+    if not e3_az_cd_found:
+        log_warn("[deploy/azure/] Aún no hay script de despliegue continuo E3 para runner azure (versiones.env + docker compose).")
+
+    # Frontend con Caddyfile en imagen única
+    front_df = os.path.join(front_dir, "Dockerfile")
+    if os.path.isfile(front_df):
+        with open(front_df, "r", encoding="utf-8", errors="ignore") as fh:
+            fdf_txt = fh.read()
+        if "caddy:" in fdf_txt and os.path.isfile(os.path.join(front_dir, "Caddyfile")):
+            log_pass("[vidalstore-frontend] Imagen única Angular + Caddyfile configurada para E3.")
+        else:
+            log_warn("[vidalstore-frontend] Aún usa nginx o falta Caddyfile para despliegue HTTPS en gw-azure (E3 Tramo 4).")
+
+    # 5. GitOps: versiones.env, desplegar.yml y workflow imagen.yml de 2 jobs
+    ver_path = os.path.join(plat_dir, "deploy", "versiones.env")
+    if os.path.isfile(ver_path):
+        with open(ver_path, "r", encoding="utf-8", errors="ignore") as fh:
+            ver_txt = fh.read()
+        imgs = re.findall(r"^[A-Z_]+=(.+)$", ver_txt, re.MULTILINE)
+        bad_imgs = [im for im in imgs if not re.match(r"^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+:[0-9a-f]{40}$", im.strip())]
+        if len(imgs) >= 7 and not bad_imgs:
+            log_pass(f"[deploy/versiones.env] Declara {len(imgs)} imágenes GHCR con SHA completo de 40 hex en minúsculas.")
+        else:
+            log_warn(f"[deploy/versiones.env] Verificar 7 imágenes GHCR con SHA de 40 hex en minúsculas (encontradas={len(imgs)}, inválidas={bad_imgs}).")
+    else:
+        log_warn("[deploy/versiones.env] Aún no existe (requerido para GitOps E3 Tramo 5).")
+
+    desp_wf = os.path.join(plat_dir, ".github", "workflows", "desplegar.yml")
+    if os.path.isfile(desp_wf):
+        with open(desp_wf, "r", encoding="utf-8", errors="ignore") as fh:
+            dwf_txt = fh.read()
+        if re.search(r"^\s*pull_request\s*:", dwf_txt, re.MULTILINE):
+            log_fail("[.github/workflows/desplegar.yml] Usa trigger pull_request con self-hosted runners (PROHIBIDO por seguridad; usar solo push a main).")
+        else:
+            log_pass("[.github/workflows/desplegar.yml] No dispara con pull_request (seguro para runners self-hosted).")
+        if all(j in dwf_txt for j in ["validar:", "aws:", "azure:", "humo:"]):
+            log_pass("[.github/workflows/desplegar.yml] Incluye los 4 jobs (validar, aws, azure, humo).")
+        else:
+            log_warn("[.github/workflows/desplegar.yml] Verificar presencia de los 4 jobs: validar, aws, azure y humo.")
+    else:
+        log_warn("[vidalstore-plataforma] Falta .github/workflows/desplegar.yml (E3 Tramo 5).")
+
+    for repo in [r for r in REPOS if r != "vidalstore-plataforma"]:
+        wf_path = os.path.join(root_dir, repo, ".github", "workflows", "imagen.yml")
+        if os.path.isfile(wf_path):
+            with open(wf_path, "r", encoding="utf-8", errors="ignore") as fh:
+                wf_txt = fh.read()
+            if "needs:" in wf_txt and "linux/amd64" in wf_txt:
+                log_pass(f"[{repo}/imagen.yml] Tiene job de pruebas previo (needs:) y platforms: linux/amd64.")
+            else:
+                log_warn(f"[{repo}/imagen.yml] Actualizar a 2 jobs (pruebas -> imagen con needs:) y platforms: linux/amd64 para E3.")
+
+
 def main():
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
     print(f"{C_BOLD}{C_CYAN}======================================================================{C_RESET}")
@@ -445,6 +746,7 @@ def main():
     audit_nube_y_red(root_dir)
     audit_e2_streaming_y_panel(root_dir)
     audit_e2_ghcr_y_nube_l10(root_dir)
+    audit_e3_dlt_admin_nubes_gitops(root_dir)
 
     print(f"\n{C_BOLD}{C_CYAN}======================================================================{C_RESET}")
     print(f"{C_BOLD}Resumen de Auditoría EP3:{C_RESET}")

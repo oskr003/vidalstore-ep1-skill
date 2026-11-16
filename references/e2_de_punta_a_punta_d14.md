@@ -171,7 +171,7 @@ sequenceDiagram
 
 ### El Ciclo Innegociable del Consumidor
 Para cada mensaje recibido de la partición:
-1. **Validación Formal (Contrato DTO):** Pasar el payload por `Contrato<T>.validar()`. Si el JSON está truncado o la versión/esquema no coincide, se atrapa la excepción `EventoInvalido`, se registra el error en log estructurado y **se confirma el offset inmediatamente** (`commit = offset + 1`).
+1. **Validación Formal (Contrato DTO):** Pasar el payload por `Contrato<T>.validar()`. Si el JSON está truncado o la versión/esquema no coincide, se atrapa la excepción `EventoInvalido`, se registra el error en log estructurado y **se confirma el offset inmediatamente** (`commit = offset + 1`). En `vidalstore.actividad`, el contrato **debe aceptar `logro.desbloqueado`** como evento válido (de lo contrario la actividad 21:00–21:04 cae a `24, 26, 41, 30, 43` en vez de `24, 27, 48, 34, 47` y en E3 esos eventos terminarían en `.dlt`).
    - *¿Por qué se confirma el evento inválido?* Porque un evento envenenado o que viola el contrato fallará siempre. Si no se confirma el offset, el consumidor quedará releyéndolo infinitamente (*poison pill loop*) y la partición se detendrá con el consumer lag creciendo sin tope.
 2. **Escritura en Persistencia (INSERT Idempotente):** Persistir en PostgreSQL mediante sentencia protegida contra duplicados:
    ```sql
@@ -182,7 +182,7 @@ Para cada mensaje recibido de la partición:
    ```
    - Si `RETURNING` devuelve 0 filas, el evento era repetido: se detecta el duplicado, no se suma nuevamente y no se lanza error.
 3. **Commit Manual del Offset:** Únicamente **después de que Postgres confirmó la transacción** (o tras registrar el evento inválido), el consumidor llama a `mensaje.commit()` (`autocommit: false`).
-   - Si la base de datos se cae (`ECONNREFUSED` / timeout), **NO se hace commit**: la partición debe fallar y reintentar, ya que confirmar un mensaje no escrito significaría **pérdida irreversible de datos**.
+   - Si la base de datos se cae (`ECONNREFUSED` / timeout), **NO se hace commit**: la Guía §7 pide **limitar los reintentos a un máximo de 3 veces** (nunca un bucle infinito sin tope, justificando el motivo del `3` en `docs/consumer-groups.md`), antes de ejecutar la acción documentada sin confirmar un mensaje no escrito.
 
 > [!IMPORTANT]
 > ### Pregunta de Examen / Quiz D14 (Slide 10)
@@ -259,7 +259,7 @@ Si el contenedor se reinicia abruptamente tras escribir `e4` en la base de datos
 - Máximo de partidas en curso en toda la noche: **480 partidas a las 21:46**.
 - Partidas en curso al cierre de cada minuto: $\text{Iniciadas acumuladas} - \text{Terminadas acumuladas}$ desde las 21:00.
 - Validación por minuto entre las 21:00 y las 21:04:
-  - **Actividad válida:** 24, 27, 48, 34 y 47 eventos.
+  - **Actividad válida:** 24, 27, 48, 34 y 47 eventos *(requiere aceptar `logro.desbloqueado` en `contrato.ts`; si se descarta da 24, 26, 41, 30 y 43 y en E3 iría al `.dlt`)*.
   - **Compras válidas:** 16, 21, 16, 16 y 20 compras.
 
 ### La Regla del Mínimo de Partidas en `vidalstore-alertas` (Slides 15 y 16)
@@ -420,7 +420,7 @@ docker exec broker-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker-1:
 > **Pregunta:** El workflow terminó en verde y la imagen aparece en tu perfil. En la nube, una máquina de AWS pide `ghcr.io/.../vidalstore-eventos:<sha>` y GHCR responde `unauthorized`. ¿Qué pasó?  
 > - **A:** Falta copiar tu token de GitHub a la máquina. $\rightarrow$ **INCORRECTO.** Las máquinas de la nube no almacenan credenciales ni tokens personales de GitHub; las imágenes deben ser accesibles anónimamente.  
 > - **B: El paquete quedó Private, como GitHub crea cada imagen nueva por omisión. $\rightarrow$ ¡CORRECTO!** Se resuelve una única vez por repositorio en *GitHub $\to$ Packages $\to$ Package settings $\to$ Change visibility $\to$ Public*.  
-> - **C:** Hay que pedir `latest` en vez del SHA. $\rightarrow$ **INCORRECTO.** El tag no modifica las políticas de autorización, y la pauta exige desplegar por SHA inmutable.  
+> - **C:** Hay que pedir `latest` en vez del SHA. $\rightarrow$ **INCORRECTO.** El tag no modifica las políticas de autorización, y la pauta exige desplegar por SHA inmutable (además de borrar cualquier tag `:latest` antiguo residual en GitHub Packages).  
 > - **D:** La máquina no tiene internet. $\rightarrow$ **INCORRECTO.** Si la máquina no tuviera salida a internet, arrojaría error de resolución DNS (`ENOTFOUND`) o de conexión (`ETIMEDOUT`), no una respuesta HTTP `401 Unauthorized` de GHCR.
 
 ---
@@ -460,8 +460,9 @@ docker exec broker-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker-1:
 > - **C:** Quitar `--default-outbound false` de la subred privada. $\rightarrow$ **INCORRECTO.** Si se quitara, Azure le asignaría una IP de salida transparente por omisión, eludiendo a `gw-azure` y dejando sin probar el NAT requerido.
 
 > [!CAUTION]
-> ### Condición de Entrega en Azure (Slide 37)
-> Al momento de entregar la E2, las dos máquinas virtuales de Azure (`gw-azure` y `bff`) deben quedar en estado **`Stopped (deallocated)`** ejecutando `az vm deallocate`.  
+> ### Condición de Entrega y Apagado Automático en Azure (Slide 37)
+> 1. En `deploy/azure/maquinas.sh`, al crear `gw-azure` y `bff` se debe configurar **`az vm auto-shutdown --resource-group <grupo> --name <vm> --time <HHMM en UTC>`** (re-ejecutable y justificado en `docs/red.md`) como salvaguarda para no agotar créditos si se olvida apagarlas manualmente.
+> 2. Al momento de entregar, las dos máquinas virtuales de Azure (`gw-azure` y `bff`) deben quedar en estado **`Stopped (deallocated)`** ejecutando `az vm deallocate`.  
 > Una VM en estado `deallocated` no consume créditos de cómputo del presupuesto del grupo, y preserva la IP pública estática y los discos para reactivarse con `az vm start` en la defensa.
 
 ---
@@ -487,9 +488,9 @@ entrega-e2-grupoNN-seccion.zip
     └── vidalstore-frontend/.env
 ```
 
-1. **`repositorios.md`:** Tabla congelada con una fila por repositorio, indicando la URL de GitHub, el commit SHA exacto de `main` a las 23:59, el comando de arranque, las imágenes de GHCR, el bucket de S3 y qué integrante aloja cada nube.
-2. **`envs/`:** Carpeta con los archivos `.env` reales y funcionales de cada componente, organizados en subcarpetas con el nombre exacto de cada repositorio.
-3. **`informe.pdf`:** Integrantes, diagramas de arquitectura de red y consumer groups, y capturas de pantalla de respaldo (nubes, GHCR en Public, Kafka UI y `/panel`).
+1. **`repositorios.md`:** Tabla congelada en formato exacto (sin tabulaciones `\t`, sin placeholders como `<AccountId>`) con una fila por repositorio, indicando la URL de GitHub, el commit SHA exacto de `main` a las 23:59, el comando de arranque, las imágenes de GHCR, el bucket real de S3 y qué integrante aloja cada nube.
+2. **`envs/`:** Carpeta con los archivos `.env` reales y funcionales de cada componente, organizados en subcarpetas con el nombre exacto de cada repositorio (los repositorios sin `.env` en runtime, como un frontend estático, no requieren carpeta).
+3. **`informe.pdf`:** Integrantes, diagramas de arquitectura de red y consumer groups (fieles 1:1 a las migraciones: nombres exactos de tablas, PKs reales y tablas auxiliares), y capturas de pantalla de respaldo cada una con **su línea explicativa**: AWS mostrando todas las IPs privadas, tabla de rutas pública y reglas de entrada (Inbound rules) de cada SG; Azure mostrando subredes con `--default-outbound false`; GHCR en `Public` sin tags `:latest` antiguos; Kafka UI con la barra del túnel `localhost:18085` y detalle por partición; terminal real sin recortar columnas; y `/panel` en el `main` final con hora `America/Santiago`.
 
 ### El Protocolo de Corrección del Profesor Umbingelelo (Slide 39):
 1. **Paso 1 (Clonar):** El docente clona cada repositorio listado en `repositorios.md` situándose en el commit SHA de `main` a las 23:59.
@@ -511,7 +512,7 @@ entrega-e2-grupoNN-seccion.zip
 ### Q.2. ¿Qué ocurre con el commit si un evento viola el contrato DTO vs si PostgreSQL sufre una caída de conexión?
 **Respuesta:** 
 - Si el evento viola el contrato (JSON roto o campo faltante), el consumidor registra el evento inválido en log y **sí realiza el commit del offset**. Esto evita que el mensaje se convierta en una *poison pill* que congele la partición reintentando eternamente.
-- Si lo que falla es PostgreSQL (`ECONNREFUSED` o timeout), el consumidor **NO realiza commit** y relanza el error para que el framework reintente o el proceso reinicie. Confirmar el offset sin haber guardado en la base de datos destruiría el evento.
+- Si lo que falla es PostgreSQL (`ECONNREFUSED` o timeout), el consumidor **NO realiza commit** y reintenta como máximo **3 veces** (Guía §7, justificando el límite en `docs/consumer-groups.md`) antes de ejecutar la acción de falla documentada. Confirmar el offset sin haber guardado en la base de datos destruiría el evento.
 
 ### Q.3. ¿Por qué la agregación de métricas de ventanas temporales debe usar `emitidoEn` y no la hora del servidor?
 **Respuesta:** Porque la hora del servidor refleja el momento en que el mensaje fue recibido por Kafka o procesado localmente, lo cual depende de la velocidad de reproducción del simulador (ej. `--velocidad 60` emite una hora en un minuto) o de si se está rebobinando un grupo histórico. El atributo `emitidoEn` es inmutable y representa el instante cronológico real en que aconteció el suceso en el dominio de negocio.

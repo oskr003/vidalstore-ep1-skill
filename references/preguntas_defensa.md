@@ -754,18 +754,18 @@ Este documento consolida:
 ---
 
 ### L.2. ¿Qué diferencia hay en `ConsumidorKafka<T>` cuando falla `contrato.validar()` (`EventoInvalido`) frente a cuando falla `negocio.procesar()` (caída de Postgres)?
-* **Respuesta Técnica (L10 §1.2–1.3)**:
-  > "* **Cuando falla `contrato.validar()` (`EventoInvalido`)**: El mensaje tiene un error permanente en el dato (JSON roto, falta `eventoId`, versión distinta de `1`). Reintentarlo un millón de veces dará el mismo fallo y bloquearía la partición. Por eso en la E2 se registra un `WARN ... INVALIDO`, **se hace `await m.commit()`** para avanzar (y en la E3 se publica antes en el `.dlt`).  
-  > * **Cuando falla `negocio.procesar()` (error de Postgres)**: El mensaje es válido pero la base de datos está caída o reiniciándose. `procesarHastaEscribir()` **no hace commit**, registra una advertencia y reintenta cada **2 segundos** hasta que Postgres responda."
+* **Respuesta Técnica (L10 §1.2–1.3 y Guía §7)**:
+  > "* **Cuando falla `contrato.validar()` (`EventoInvalido`)**: El mensaje tiene un error permanente en el dato (JSON roto, falta `eventoId`, versión distinta de `1`). Reintentarlo un millón de veces dará el mismo fallo y bloquearía la partición. Por eso en la E2 se registra un `WARN ... INVALIDO`, **se hace `await m.commit()`** para avanzar (y en la E3 se publica antes en el `.dlt`). *(Ojo: `contrato.ts` debe aceptar `logro.desbloqueado` como válido para no enviarlo al `.dlt` ni falsear el conteo 21:00–21:04).*  
+  > * **Cuando falla `negocio.procesar()` (error de Postgres)**: El mensaje es válido pero la base de datos está caída o reiniciándose. El consumidor **no hace commit** y reintenta como máximo **3 veces** (Guía §7, justificando el límite en `docs/consumer-groups.md`, nunca un bucle infinito sin tope) antes de ejecutar la acción de fallo documentada."
 
 ---
 
 ### L.3. ¿Cuáles son las tres formas de idempotencia en Postgres implementadas en `eventos` y por qué la clave primaria de `eventos_procesados` es `(grupo, evento_id)` y no solo `evento_id`?
 * **Respuesta Técnica (L10 §1.5–1.9)**:
   > "1. **Una fila por evento (`kpi_minuto` en `panel`)**: La PK es `evento_id`; inserta con `ON CONFLICT (evento_id) DO NOTHING RETURNING evento_id`.  
-  > 2. **Contadores + tabla `eventos_procesados` en la misma transacción (`alertas` e `historial`)**: Dentro de `this.base.transaction(...)`, inserta primero en `eventos_procesados (grupo, evento_id)` con `ON CONFLICT DO NOTHING RETURNING evento_id`; solo si devuelve fila actualiza los contadores.  
+  > 2. **Contadores + tabla de eventos procesados en la misma transacción (`alertas` e `historial`)**: Dentro de `this.base.transaction(...)`, inserta primero en `eventos_procesados (grupo, evento_id)` **o** en la tabla propia del dominio con `PK (evento_id)` / `UNIQUE(evento_id)` (p. ej. `partidas_terminadas` en alertas y `historial_compras` en historial) con `ON CONFLICT DO NOTHING RETURNING evento_id`; solo si devuelve fila actualiza los contadores. *(Todos los nombres de tablas, claves y funciones en `docs/consumer-groups.md` deben coincidir 1:1 con las migraciones).*  
   > 3. **Reemplazo con guarda temporal (`catalogo` en grupos de 3)**: `ON CONFLICT (juego_id) DO UPDATE ... WHERE catalogo.emitido_en < EXCLUDED.emitido_en`.  
-  > La clave primaria de `eventos_procesados` debe ser compuesta **`(grupo, evento_id)`** porque en Kafka un mismo evento (ej. una compra) es leído legítimamente por varios consumer groups independientes (`panel` e `historial`). Si la PK fuera solo `evento_id`, el primer grupo en procesarlo bloquearía al segundo."
+  > Si se usa tabla compartida `eventos_procesados`, su clave primaria debe ser compuesta **`(grupo, evento_id)`** porque en Kafka un mismo evento (ej. una compra) es leído legítimamente por varios consumer groups independientes (`panel` e `historial`). Si la PK fuera solo `evento_id`, el primer grupo en procesarlo bloquearía al segundo."
 
 ---
 
@@ -976,6 +976,71 @@ Este documento consolida:
   >   2. Descomprime la carpeta `envs/` al lado de los clones, dejando cada `.env` en su repositorio.  
   >   3. Entra a `vidalstore-plataforma` y ejecuta `bash levantar.sh`.  
   >   4. Revisa `informe.pdf`, `docs/despliegue.md`, el panel en `/panel` y las cifras del dataset."
+
+---
+
+## Bloque N: Preguntas Oficiales de L12A, L12 y Defensa de la Entrega 3 (`EP3-Entrega-3.pdf` pág. 8)
+
+> ### Las 5 Preguntas Oficiales de la Defensa de la E3 y Casos Prácticos de L12A / L12
+
+### N.1. ¿Qué va al `.dlt` y qué se reintenta, y por qué no se reintenta para siempre? (Pregunta 1 E3 · L12A / L12 §1.4)
+* **Respuesta Técnica**:
+  > "* **Directo al `.dlt` sin reintentos**: Todo evento con defecto permanente en el payload que jamás se arreglará al reintentar —JSON roto (`json-invalido`), campo obligatorio faltante (`falta-<campo>`), versión distinta de `1` (`version-desconocida`) o DTO inválido (`dto-invalido`)—. Se publica en `<topic>.dlt` con `x-motivo` y `x-grupo`, se registra `WARN` y se confirma el offset recién tras confirmar el `.dlt`.  
+  > * **Se reintenta con tope (máximo 3 veces, esperando 1, 2 y 4 s)**: Fallos transitorios de infraestructura como Postgres caído (`ECONNREFUSED`/timeout), que pueden recuperarse en segundos. Si al 3.º reintento sigue caído, se desvía al `.dlt` con `x-motivo: postgres-no-responde` y se confirma. *(Los duplicados detectados por `UNIQUE(evento_id)` se confirman sin escribir y no van al `.dlt`)*.  
+  > * **Por qué no se reintenta para siempre**: En Kafka el orden es por partición; mientras el consumidor insiste con un evento en bucle (*poison pill*), todos los eventos válidos detrás en esa partición quedan bloqueados y el *consumer lag* crece sin techo."
+
+---
+
+### N.2. ¿Por qué no se pueden disminuir las particiones de un topic y qué responde `vidalstore-admin`? (Pregunta 2 E3 · L12A / L12 §2.2)
+* **Respuesta Técnica**:
+  > "Kafka solo permite aumentar particiones (`createPartitions`), nunca disminuirlas, por dos razones:  
+  > 1. No existe una operación para vaciar o redistribuir los mensajes ya escritos en la partición que se quitaría.  
+  > 2. La partición de cada evento se calcula con $\text{murmur2}(\text{key}) \bmod N$. Al cambiar $N$ (por ejemplo de `3` a `2`), los eventos futuros de un mismo `usuarioSub` o `juegoId` caerían en otra partición distinta a sus eventos antiguos, rompiendo el orden garantizado (como procesar `licencia.revocada` antes de su `compra.realizada`).  
+  > Por eso `POST /v1/admin/kafka/topics/:nombre/particiones` valida antes de llamar al broker y responde **`400 Bad Request`** explicando el motivo (nunca `500`)."
+
+---
+
+### N.3. ¿Por qué `gw-aws` acepta el puerto `443` solo desde `gw-azure`, y para qué está abierto el `80`? (Pregunta 3 E3 · L12A / L12 §3.2)
+* **Respuesta Técnica**:
+  > "* **Puerto `443` solo desde `${IP_GW_AZURE}/32`**: En la arquitectura de E3, la única máquina que llama a la API de AWS es Azure (`gateway` de `gw-azure` y `bff` saliendo por el NAT de `gw-azure`, ambos con la IP pública estática de `gw-azure`). Cerrar el `443` a esa única IP protege los servicios de AWS frente a internet: un `curl` desde cualquier otro origen sufre **timeout** porque el Security Group descarta el paquete en silencio.  
+  > * **Puerto `80` abierto (`0.0.0.0/0`)**: Es necesario para el **desafío HTTP-01 de Let's Encrypt**, cuyos servidores de validación (sin IPs fijas publicadas) consultan un archivo por HTTP en el `:80` para emitir y renovar automáticamente cada ~60 días el certificado TLS de `<elastic-ip-con-guiones>.sslip.io`. Por el `80` no pasa tráfico de la API; Caddy solo responde el desafío y redirige `308` al `443`."
+
+---
+
+### N.4. ¿Por qué el tag de la imagen es el `sha`, y por qué el runner vive dentro de la nube? (Pregunta 4 E3 · L12A / L12 §5.5)
+* **Respuesta Técnica**:
+  > "* **Tag por `sha` en lugar de `latest`**: El SHA completo de 40 caracteres identifica de forma inmutable qué commit exacto corre en cada contenedor; `latest` es mutable y cambia sin alterar Git. Con SHA en `deploy/versiones.env`, hacer *rollback* es revertir una línea en Git y hacer merge a `main`.  
+  > * **Self-hosted runners dentro de las nubes (`gestion` en AWS y `bff` en Azure)**: Los runners viven dentro de las subredes privadas y abren únicamente conexiones salientes por el puerto `443` hacia GitHub. Así despliegan vía SSM (`LabInstanceProfile`) en AWS y vía VNet/SSH en Azure **sin abrir puertos entrantes** y **sin guardar credenciales de nube en GitHub Secrets** (donde además las credenciales temporales del Learner Lab caducan cada 4 horas)."
+
+---
+
+### N.5. ¿Qué hace el sistema con un evento que no trae `eventoId`? (Pregunta 5 E3 · L12A §1 / L12 §1.2 y §1.6)
+* **Respuesta Técnica**:
+  > "Aunque llegue como JSON válido (e incluso si trae otro error como `version: 99`), `Contrato<T>.validar()` evalúa primero los campos obligatorios faltantes (`value === undefined || value === null`) y lanza **`EventoInvalido('falta-eventoId', ...)`**.  
+  > Sin `eventoId` es imposible aplicar la restricción de idempotencia `UNIQUE(evento_id)` en PostgreSQL, así que **no se escribe en ninguna tabla** y **no se reintenta**: cada consumer group que lo lee lo publica inmediatamente en `<topic>.dlt` con **`x-motivo: falta-eventoId`**, su `x-grupo` y sus metadatos originales (`x-correlation-id`, `x-topic-origen`, `x-particion`, `x-offset`), y confirma el offset para seguir procesando."
+
+---
+
+### N.6. Si un grupo está activo (`Stable`) o si se intenta borrar `vidalstore.compras` sin confirmación, ¿qué debe responder `vidalstore-admin`? (L12 §2.2 y §2.4)
+* **Respuesta Técnica**:
+  > "* **Rebobinado con miembros activos (`POST /v1/admin/kafka/grupos/:id/offsets`)**: `KafkaAdminService` verifica `describeGroups()` antes de alterar offsets; si `miembros > 0`, responde **`409 Conflict`** indicando detener primero los consumidores (nunca `500`), evitando que los consumidores vivos sobrescriban el nuevo offset en su siguiente commit.  
+  > * **Borrado de topic protegido (`DELETE /v1/admin/kafka/topics/:nombre`)**: Para cualquier topic con prefijo `'vidalstore.'`, exige `?confirmar=<nombre exacto>`; si falta o no coincide, responde **`400 Bad Request`** para prevenir la pérdida accidental de historia de negocio."
+
+---
+
+### N.7. ¿Por qué `deploy/aws/desplegar.sh` requiere `--exact-timestamps` en `aws s3 sync` y qué ocurre si `desplegar.yml` usara `pull_request`? (L12 §3.3, §5.3 y §5.5)
+* **Respuesta Técnica**:
+  > "* **`--exact-timestamps` en `s3 sync`**: Al cambiar un SHA de 40 caracteres por otro en `deploy/versiones.env`, el archivo conserva **exactamente el mismo tamaño en bytes**. Sin `--exact-timestamps`, `aws s3 sync` en las EC2 cree que el archivo no cambió, no lo descarga y el job termina en verde dejando corriendo la versión antigua.  
+  > * **Prohibido `pull_request` en `desplegar.yml`**: Porque con runners `self-hosted` dentro de nuestras nubes privadas, disparar en `pull_request` permitiría ejecutar código arbitrario de una rama no aprobada dentro de `gestion` o `bff`. Debe correr **únicamente con `push` a `main`** (y `workflow_dispatch`) en el repo **`vidalstore-plataforma` privado**."
+
+---
+
+### N.8. Con una reproducción completa del dataset VidalStore en la E3, ¿cuántos mensajes terminan en los `.dlt`, por qué crece `.dlt` al rebobinar `vidalstore-historial` y por qué `vidalstore.catalogo.dlt` usa `delete`? (L12 §1.1, §1.6 y §2.5)
+* **Respuesta Técnica**:
+  > "* **Conteos del dataset**: `vidalstore.actividad` tiene `30` eventos inválidos (`10` JSON cortado, `10` `version: 99`, `10` campo faltante) que desvían tanto `vidalstore-panel` como `vidalstore-alertas` = **`60` mensajes en `vidalstore.actividad.dlt`**. `vidalstore.compras` tiene `4` inválidos (`2`, `1`, `1`) desviados por `vidalstore-panel` y `vidalstore-historial` = **`8` mensajes en `vidalstore.compras.dlt`**.  
+  > * **Rebobinado de `vidalstore-historial`**: Al releer `vidalstore.compras` desde offset `0`, vuelve a desviar sus `4` inválidos, haciendo crecer `vidalstore.compras.dlt` de `8` a `12` mensajes (en nuevos offsets del `.dlt`, pero con el mismo `x-topic-origen`, `x-particion` y `x-offset`).  
+  > * **`cleanup.policy=delete` en `vidalstore.catalogo.dlt`**: Aunque `vidalstore.catalogo` es `compact`, su `.dlt` debe ser `delete` con 7 días porque registra **cada error ocurrido** para auditoría y reproceso, nunca solo el último error por clave."
+
 
 
 
