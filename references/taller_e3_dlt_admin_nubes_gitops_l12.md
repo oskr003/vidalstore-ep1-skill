@@ -199,12 +199,12 @@ Navegador (Usuario / Arturo)
    - En `gestion` (`deploy/aws/gestion/compose.yml`): `kafka-ui` (`127.0.0.1:8080:8080`) y `admin` (`127.0.0.1:3020:3020`) escuchan solo en loopback.
    - `05-tunel.sh` abre `localhost:18085` (Kafka UI) y `localhost:13020` (`vidalstore-admin`).
    - Para abrir servicios de otras máquinas privadas pasando por `gestion` (Postgres en `datos:5432` o RabbitMQ UI en `mq-1:15672`): usar `AWS-StartPortForwardingSessionToRemoteHost` con `--parameters "host=10.0.21.30,portNumber=5432,localPortNumber=15432"`.
-5. **Despliegue sin llaves SSH (`deploy/aws/desplegar.sh`):**
-   - Sincroniza `deploy/` a `s3://$BUCKET/deploy/` excluyendo `aws/secretos/*`.
-   - Envía por `aws ssm send-command` en paralelo a `servicios`, `gestion` y `gw-aws`:
+5. **Despliegue sin llaves SSH (directo en `.github/workflows/desplegar.yml`, job `aws` — SIN script `.sh` de despliegue):**
+   - La pauta E3 prohíbe scripts `.sh` de despliegue continuo: toda la lógica vive en el job `aws` de `desplegar.yml` (usando la variable `BUCKET`).
+   - Sube `deploy/` a `s3://$BUCKET/deploy/` excluyendo secretos y envía por `aws ssm send-command` a `servicios`, `gestion` y `gw-aws`:
      - **`aws s3 sync ... --exact-timestamps`** *(CRÍTICO: reemplazar un SHA en `versiones.env` mantiene el tamaño exacto del archivo; sin `--exact-timestamps`, `s3 sync` no descarga el cambio!)*.
      - Escribe `/opt/vidalstore/secretos/<maquina>.env` desde Parameter Store (`--with-decryption`).
-     - Ejecuta `docker compose --env-file ../../versiones.env up -d --wait --remove-orphans` e imprime **`docker compose ps --format '{{.Name}} {{.Image}} {{.Status}}'`** para probar qué SHA quedó corriendo.
+     - Ejecuta `docker compose --env-file ../../versiones.env pull && up -d --wait --remove-orphans` e imprime **`docker compose ps --format '{{.Name}} {{.Image}} {{.Status}}'`** para probar qué SHA quedó corriendo.
 
 ### 4.3 Tramo 4 · Azure Completo (`deploy/azure/` y `vidalstore-frontend`)
 1. **Frontend + Caddy en una sola imagen (`vidalstore-frontend/Dockerfile` + `Caddyfile`):**
@@ -221,9 +221,9 @@ Navegador (Usuario / Arturo)
    - Secretos en `/opt/vidalstore/secretos/gw-azure.env` y `bff.env` (`chmod 700`/`600`, fuera de Git; o Key Vault justificado en `deploy/`).
    - `deploy/azure/gw-azure/compose.yml`: `frontend` y `gateway` con `network_mode: host`.
    - `deploy/azure/bff/compose.yml`: `bff` en `:3001` (o `:3000`) llamando a AWS `https://<elastic-ip-con-guiones>.sslip.io` saliendo por NAT de `gw-azure`.
-5. **Scripts `deploy/azure/desplegar.sh` y `deploy/azure/humo.sh`:**
-   - `desplegar.sh` corre en `bff` posicionándose en **`deploy/`** (`cd "$(dirname "$0")/.."` — si apunta a la raíz falla con `couldn't find env file: .../versiones.env`), levanta `bff` local y por SSH dentro de la VNet (`10.1.1.4`, llave `id_ed25519` generada en `bff` y autorizada en `gw-azure`) copia `versiones.env` + `gw-azure/compose.yml` y levanta `gw-azure`.
-   - `humo.sh` verifica con reintentos: `200` en `$FRONT/`, `200` en `$FRONT/panel`, `401` en `$AWS/v1/<ruta>` sin token, y `200` con `$TOKEN` del login del navegador *(un token sacado por CLI con `USER_PASSWORD_AUTH` suele carecer del scope de aplicación y retorna `403`)*.
+5. **Despliegue y prueba de humo directos en `.github/workflows/desplegar.yml` (jobs `azure` y `humo` — SIN scripts `.sh` de despliegue):**
+   - El job `azure` corre en `bff` posicionándose en **`deploy/`** (`cd deploy` — si apunta a la raíz falla con `couldn't find env file: .../versiones.env`), levanta `bff` local (`docker compose pull && up -d`) y por SSH dentro de la VNet (`10.1.1.4`, llave `id_ed25519` generada en `bff` y autorizada en `gw-azure`) copia `versiones.env` + `gw-azure/compose.yml` y levanta `gw-azure`.
+   - El job `humo` corre en `bff` después de `aws` y `azure` usando las variables `FRONTEND_URL` y `AWS_URL`: verifica `200` en `$FRONTEND_URL/`, `200` en `$FRONTEND_URL/callback`, y `401` en `$AWS_URL/v1/catalogo` sin token. *(Desde `bff` con token del navegador también se verifica `200` / `403` si se usa CLI `USER_PASSWORD_AUTH` sin scope).*
 
 ---
 
@@ -252,8 +252,9 @@ Navegador (Usuario / Arturo)
 
 ### 5.3 Reglas Críticas de `vidalstore-plataforma`, `versiones.env`, `desplegar.yml` y Runners
 1. **`vidalstore-plataforma` debe ser `Private`:**
-   - Un repositorio público con *self-hosted runners* expone workflows y estructura interna a terceros (GitHub desaconseja runners en repos públicos). Cambiar en `Settings → Danger Zone → Change visibility → Private`.
-   - Configurar **Variable** (no Secret) en `Settings → Secrets and variables → Actions → Variables`: `BUCKET = <nombre-bucket-s3>`. **La pestaña `Secrets` queda vacía** de credenciales AWS/Azure.
+   - Un repositorio público con *self-hosted runners* expone workflows y estructura interna a terceros (GitHub desaconseja runners en repos públicos). Cambiar en `Settings → Danger Zone → Change visibility → Private` (si viene de un fork público y GitHub no deja hacerlo privado, crear repo privado nuevo con `git push --mirror` e invitar al docente como colaborador).
+   - Configurar 3 **Variables** (no Secrets) en `Settings → Secrets and variables → Actions → Variables`: `BUCKET`, `FRONTEND_URL` y `AWS_URL`. **La pestaña `Secrets` queda vacía** de credenciales AWS/Azure.
+   - En `gestion` (Amazon Linux), instalar antes del runner: `sudo dnf install -y git libicu tar` (sin `libicu` el runner no arranca).
 2. **`deploy/versiones.env`:**
    - Declara las 7 imágenes por **SHA completo de 40 caracteres hexadecimales en minúsculas** (nunca `:latest`): `GATEWAY`, `CATALOGO`, `LICENCIAS`, `EVENTOS`, `ADMIN`, `BFF`, `FRONTEND`.
    - **Por qué SHA y por qué runners dentro de la nube (Pregunta 4 de Defensa E3):** El SHA ata exactamente el código desplegado y permite rollback revirtiendo una línea en Git; `:latest` es mutable. Los runners viven dentro de las subredes privadas (`gestion` y `bff`) abriendo solo conexiones salientes `:443` hacia GitHub: llegan por SSM/rol IAM y VNet sin abrir puertos entrantes ni guardar credenciales de AWS/Azure en GitHub (donde además las llaves del Learner Lab vencen cada 4 horas).
@@ -288,13 +289,17 @@ $K/kafka-get-offsets.sh --bootstrap-server 10.0.21.11:9092 --topic vidalstore.co
 ```
 Además, incluir el **enlace al run verde de `desplegar.yml`** en GitHub Actions que ejecutó el despliegue.
 
-### 6.2 Qué se Sube al AVA en la E3 (`EP3-Entrega-3.pdf` pág. 8)
-Un **único archivo PDF** al AVA (con copia al correo `cr.calderons@profesor.duoc.cl`) con:
-1. Integrantes, sección y número de grupo.
-2. Enlace de cada repositorio (se corrige `main` tal como quedó a las 23:59).
-3. URL de Azure (`https://<etiqueta>.<region>.cloudapp.azure.com`) y URL de `gw-aws` (`https://<elastic-ip-con-guiones>.sslip.io`, que solo responde a `gw-azure`).
-4. El comando único que levanta todo en local (copiado literal de `README.md`) y el enlace a `docs/despliegue.md` con las 5 salidas de la E3.
-5. El contenido exacto de `deploy/versiones.env` en ese commit de entrega.
+### 6.2 Qué se Sube al AVA en la E3 (`EP3-Entrega-3.pdf` págs. 10–11)
+**Dos archivos** subidos por un integrante al AVA, con copia al correo `cr.calderons@profesor.duoc.cl` (sin `.zip` ni `.env`; la nube debe estar **ya encendida** al comenzar el turno de defensa, o `IE6`, `IE3` e `IE9` quedan topados al 30%):
+1. **El PDF con imágenes:**
+   - Integrantes, sección, número de grupo, y quién aloja AWS y quién Azure.
+   - Capturas con 1 línea descriptiva: frontend en Azure con el panel, ejecución de `imagen.yml` y de `desplegar.yml` con sus 4 jobs en verde, Kafka UI por el túnel y los `.dlt`.
+   - Enlace a `docs/despliegue.md` (con pasos para re-levantar en nueva sesión del Learner Lab + las 5 salidas de la E3) y **cuál de los dos órdenes del Paso 1 eligió el grupo** (*Validar antes de mirar el tipo* → `60`/`8` vs *Filtrar por tipo primero* → `45`/`8`).
+   - El contenido exacto de `deploy/versiones.env` en ese commit de entrega.
+2. **El `.md` de entrega:**
+   - Enlace de cada repositorio (indicando el nombre del de plataforma si no es `vidalstore-plataforma`).
+   - URL públicas: `https://<etiqueta>.<region>.cloudapp.azure.com` y `https://<elastic-ip-con-guiones>.sslip.io` (que solo responde a `gw-azure`).
+   - **Dos usuarios de prueba de Cognito con su contraseña:** uno en `administradores` y un `jugador`.
 
 ### 6.3 Las 5 Preguntas Oficiales de Defensa de la E3 (`EP3-Entrega-3.pdf` pág. 8)
 1. **¿Qué va al `.dlt` y qué se reintenta, y por qué no se reintenta para siempre?**
@@ -314,11 +319,11 @@ Un **único archivo PDF** al AVA (con copia al correo `cr.calderons@profesor.duo
 | `INVALID_CONFIG: Invalid value undefined for configuration segment.ms` | Con `target: ES2023` las props opcionales del DTO viajan como `undefined` | Filtrar `Object.entries(dto.configs ?? {}).filter(([, v]) => v !== undefined)` en `crearTopic()`. |
 | `Client.UserInitiatedShutdown` al crear `gw-aws` | Más de 9 instancias EC2 en la misma cuenta Learner Lab | Revisar EC2 y apagar/terminar instancias sobrantes de otros ramos o pruebas. |
 | `gw-aws: no hay una instancia corriendo con Name=gw-aws` | `gw-aws` está detenida o no se creó | Ejecutar `bash deploy/aws/02-maquinas.sh gw-aws` (o `05-instancias.sh`). |
-| Job `aws` en verde, pero la EC2 sigue con la imagen anterior | `aws s3 sync` sin `--exact-timestamps` no bajó `versiones.env` porque un SHA tiene el mismo tamaño que otro | Añadir `--exact-timestamps` al `aws s3 sync` dentro de `deploy/aws/desplegar.sh`. |
+| Job `aws` en verde, pero la EC2 sigue con la imagen anterior | `aws s3 sync` sin `--exact-timestamps` no bajó `versiones.env` porque un SHA tiene el mismo tamaño que otro | Añadir `--exact-timestamps` al `aws s3 sync` dentro del job `aws` de `.github/workflows/desplegar.yml`. |
 | `AADSTS530036` al correr comandos `az` | Expiró el refresh token de Azure CLI | Ejecutar `az logout` y `az login`. |
-| `Permission denied (publickey)` al saltar a `bff` | No se está pasando el archivo SSH config con `ProxyJump` y llave | Usar `ssh -F ~/.ssh/<config-azure> bff`. |
-| `couldn't find env file .../versiones.env` en job `azure` | `deploy/azure/desplegar.sh` hace `cd` a la raíz del repo en vez de `deploy/` | Corregir a `cd "$(dirname "$0")/.."`. |
-| `MAL frontend ...: 000` en `humo.sh` | `FRONTEND` en `versiones.env` aún apunta a imagen con `nginx` o Caddy no obtuvo certificado | Actualizar SHA de `FRONTEND` con imagen Caddy y verificar puertos 80/443 y `DOMINIO`. |
+| `Permission denied (publickey)` al saltar a `bff` | No se está pasando el archivo SSH config con `ProxyJump` / `ProxyCommand` y llave | Usar `ProxyCommand` con `-i` en ambos tramos o `ssh -F ~/.ssh/<config-azure> bff`. |
+| `couldn't find env file .../versiones.env` en job `azure` | El job `azure` de `desplegar.yml` corre desde la raíz del repo en vez de `deploy/` | Posicionarse en `deploy/` (`cd deploy`) antes de correr `docker compose`. |
+| `MAL frontend ...: 000` en job `humo` | `FRONTEND` en `versiones.env` aún apunta a imagen con `nginx` o Caddy no obtuvo certificado | Actualizar SHA de `FRONTEND` con imagen Caddy y verificar puertos 80/443 y `DOMINIO`. |
 | `redirect_mismatch` en login Cognito | URL de Azure en Cognito y en `main.ts` difieren en un carácter (ej. `/` final) | Hacer que coincidan carácter por carácter en ambos sitios. |
 | `403 te falta el permiso ...` al probar desde `bff` | El token usado salió por CLI (`USER_PASSWORD_AUTH`) sin el scope de aplicación | Usar el access token obtenido del login Hosted UI en el navegador. |
 | `No test files found, exiting with code 1` en `pruebas` | Vitest falla si un servicio aún no tiene archivos `*.spec.ts` | Usar `npm test --if-present -- --passWithNoTests`. |
